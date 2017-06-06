@@ -147,7 +147,7 @@ class PTLayer(object):
         pass
 
     def setTensor(self, model, all_params):
-        print(self.name)
+        print(self.name) # useful sanity check
         ipdb.set_trace()
         assert(False)
 
@@ -359,9 +359,9 @@ class PTPooling(PTLayer):
         elif len(pad) == 2 : pad = [pad[0], pad[0], pad[1], pad[1]]
 
         self.method = method
-        self.pad = pad
+        self.pad = tolist(pad)
         self.kernel_size = tolist(kernel_size)
-        self.stride = stride
+        self.stride = tolist(stride)
         self.pad_corrected = None
 
     def setTensor(self, model, all_params):
@@ -376,6 +376,7 @@ class PTPooling(PTLayer):
         print('  c- stride: %s' % (self.stride,))
 
     def reshape(self, model):
+        ipdb.set_trace()
         shape = model.vars[self.inputs[0]].shape
         if not shape: return
         # MatConvNet uses a slighly different definition of padding, which we think
@@ -403,16 +404,17 @@ class PTPooling(PTLayer):
 
     def toMatlab(self):
         mlayer = super().toMatlab()
+        if not self.pad_corrected:
+            print('Warning: pad correction for layer {} could not be ' \
+                 'computed because the layer input shape could not be '  \
+                  'determined'.format(self.name))
+            self.pad_corrected = self.pad # tmp fix
         mlayer['type'][0] = u'dagnn.Pooling'
         mlayer['block'][0] = dictToMatlabStruct(
             {'method': self.method,
              'poolSize': row(self.kernel_size),
              'stride': row(self.stride),
              'pad': row(self.pad_corrected)})
-        if not self.pad_corrected:
-            print('Warning: pad correction for layer {} could not be ' \
-                 'computed because the layer input shape could not be '  \
-                  'determined'.format(self.name))
         return mlayer
 
 # --------------------------------------------------------------------
@@ -436,3 +438,21 @@ class PTConcat(PTLayer):
         mlayer['type'][0] = u'dagnn.Concat'
         mlayer['block'][0] = dictToMatlabStruct({'dim': float(self.concatDim)})
         return mlayer
+
+class PTDropout(PTElementWise):
+    def __init__(self, name, inputs, outputs, ratio):
+        super().__init__(name, inputs, outputs)
+        self.ratio = ratio
+
+    def toMatlab(self):
+        mlayer = super(PTDropout, self).toMatlab()
+        mlayer['type'][0] = u'dagnn.DropOut'
+        mlayer['block'][0] = dictToMatlabStruct({'rate': float(self.ratio)})
+        return mlayer
+
+    def setTensor(self, model, all_params):
+        pass
+
+    def display(self):
+        super(PTDropout, self).display()
+        print('  c- ratio (dropout rate):', self.ratio)
