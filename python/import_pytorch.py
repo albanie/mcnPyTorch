@@ -1,3 +1,5 @@
+import sys
+
 from IPython import get_ipython
 ipython = get_ipython()
 ipython.magic('load_ext autoreload')
@@ -11,7 +13,6 @@ sys.excepthook = ultratb.FormattedTB(mode='Verbose',
 import matplotlib 
 matplotlib.use('Agg')
 
-import sys
 
 import matplotlib.pyplot as plt
 sys.path.insert(0, '/users/albanie/coding/src/zsvision/python') # lazy
@@ -109,7 +110,6 @@ sizes = feat_sizes + cls_sizes
 
 for sz in sizes:
     print(sz)
-   
 
 # rename keys to make compatible (duplicates params)
 tmp = OrderedDict()
