@@ -15,10 +15,26 @@ pDag.conserveMemory = 0 ;
 
 imSz = mDag.meta.inputSize ;
 im = single(imresize(imread('peppers.png'), imSz(1:2))) ;
+imMean = [123, 117, 104] ; 
+imMean = reshape(imMean, 1, 1, 3) ;
+im = bsxfun(@minus, im, imMean) ;
 
-%target = pDag.getVarIndex('pred') ;
-%pDag.vars(target).precious = 1 ;
+imagesc(im / 255) ;
+zs_dispFig ; 
+
+pTarget = pDag.getVarIndex('prob') ;
+mTarget = mDag.getVarIndex('prob') ;
 
 mDag.eval({'input', im}) ;
-pDag.eval({'data', im}) ;
-%preds = dag.vars(target).value ;
+pDag.eval({'data', im / 255}) ;
+
+pPreds = squeeze(pDag.vars(pTarget).value) ;
+mPreds = squeeze(mDag.vars(mTarget).value) ;
+
+[mScore, mI] = max(mPreds) ;
+title(sprintf('%s (%d), score %.3f',...
+mDag.meta.classes.description{mI}, mI, mScore)) ;
+
+[pScore, pI] = max(pPreds) ;
+title(sprintf('%s (%d), score %.3f',...
+mDag.meta.classes.description{pI}, pI, pScore)) ;

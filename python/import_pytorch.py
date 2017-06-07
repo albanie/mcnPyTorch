@@ -10,12 +10,14 @@ from IPython.core import ultratb
 sys.excepthook = ultratb.FormattedTB(mode='Verbose',
      color_scheme='Linux', call_pdb=1)
 
-import matplotlib 
+import matplotlib, os
+import copy
 matplotlib.use('Agg')
 
 
 import matplotlib.pyplot as plt
-sys.path.insert(0, '/users/albanie/coding/src/zsvision/python') # lazy
+path = os.path.expanduser('~/coding/src/zsvision/python')
+sys.path.insert(0, path) # lazy
 from zsvision.zs_iterm import zs_dispFig
 
 import torch
@@ -103,9 +105,6 @@ x = Variable(torch.from_numpy(rand_feats)).float()
 x = x.view(x.size(0), -1)
 cls_sizes = get_feat_sizes(net.classifier, x, sizes=[])
 
-# TODO: Insert flatten operation
-# TODO: refactor messy connectors into state dict
-
 sizes = feat_sizes + cls_sizes
 
 for sz in sizes:
@@ -118,55 +117,78 @@ for key in params:
     tmp[new_name] = params[key]
 params = tmp 
 
-def process_custom_module(name, module, in_vars, sizes):
+def process_custom_module(name, module, state):
     layers = []
     if isinstance(module, torchvision.models.resnet.Bottleneck):
-        id_var = in_vars
+        id_var = state['in_vars']
         downsample = hasattr(module, 'downsample') and bool(module.downsample)
         children = list(module.named_children())
         assert len(children) == 7 + downsample, 'unexpected bottleneck size'
-        block = construct_layers(children[:6], in_vars=in_vars, prefix=name, sizes=sizes)
+        state['prefix'] = name
+        block = construct_layers(children[:6], state)
         layers.extend(block)
-        in_vars = block[-1].outputs
+        state['in_vars'] = block[-1].outputs
 
         if downsample:
-            down_block = construct_layers([children[-1]], id_var, prefix=name, sizes=sizes)
+            state_ = copy.deepcopy(state) ; state_['in_vars'] = id_var
+            down_block = construct_layers([children[-1]], state_)
             layers.extend(down_block)
             id_var = down_block[-1].outputs
 
         cat_name = '{}_cat'.format(name)
-        cat_layer = pl.PTConcat(cat_name, [*id_var, *in_vars], [cat_name], 3)
+        cat_layer = pl.PTConcat(cat_name, [*id_var, *state['in_vars']], [cat_name], 3)
         layers.append(cat_layer)
-        in_vars = cat_layer.outputs
+        state['in_vars'] = cat_layer.outputs
 
         relu_idx = [child[0] for child in children].index('relu')
         assert relu_idx > 0, 'relu not found'
-        relu = construct_layers([children[relu_idx],], in_vars=in_vars, prefix=name, sizes=sizes)
+        relu = construct_layers([children[relu_idx],], state)
         layers.extend(relu) # note that relu is a "one-layer" list
     else:
         raise ValueError('unrecognised module {}'.format(type(module)))
     return layers
 
-def print_size_info(name, module, sizes):
+def update_size_info(name, module, state, pop_first=1):
     """
-    print size summary and perform some sanity checks
+    print size summary, perform some sanity checks and (by default) pops
+    the leading size
     """
     print('{}: {}'.format(name, module))
-    in_sz, out_sz = sizes[0], sizes[1]
+    in_sz, out_sz = state['sizes'][:2]
     print(' +  size: {} -> {}'.format(in_sz, out_sz))
     if module in ['ReLU', 'BatchNorm']:
         assert in_sz == out_sz, 'sizes should match for {}'.format(module)
+    if pop_first:
+        state['sizes'].pop(0)
+    return state
 
-def construct_layers(graph, in_vars, prefix='', sizes=[]):
+def construct_layers(graph, state):
+    """
+    `state`: a dictionary which is carried through the graph construction
+    `opts`: a dict of opts for the current layer
+    """
     layers = [] 
     for name, module in graph:
+
         name = name.replace('.', '_') # make comatible with MATLAB
-        if prefix: name = '{}_{}'.format(prefix, name)
-        opts, out_vars, rec_out = {}, [name,], None
+
+        if name == 'classifier': 
+            # special case - flattening is done in the network class, rather 
+            # than in the moudles with pytorch, so we need to 'catch' this event 
+            if state['prefix']: name = '{}_{}'.format(state['prefix'], name)
+            opts['axis'] = 3
+            name_ = '{}_flatten'.format(name)
+            state['out_vars'] = [name_]
+            args = [name_, state['in_vars'], state['out_vars']]
+            layers.append(pl.PTFlatten(*args, **opts))
+            state['in_vars'] = state['out_vars']
+
+        opts = {} 
+        if state['prefix']: name = '{}_{}'.format(state['prefix'], name)
+        state['out_vars'] = [name]
+        args = [name, state['in_vars'], state['out_vars']]
 
         if isinstance(module, torch.nn.modules.conv.Conv2d):
-            print_size_info(name, 'Conv2d', sizes)
-            sizes.pop(0)
             opts['bias_term'] = bool(module.bias)
             opts['num_output'] = module.out_channels
             opts['kernel_size'] = module.kernel_size
@@ -174,57 +196,48 @@ def construct_layers(graph, in_vars, prefix='', sizes=[]):
             opts['stride'] = module.stride
             opts['dilation'] = module.dilation
             opts['group'] = module.groups
-            layer = pl.PTConv(name, in_vars, out_vars, **opts)
-            layers.append(layer)
+            layers.append(pl.PTConv(*args, **opts))
+            state = update_size_info(name, 'Conv2d', state)
 
         elif isinstance(module, torch.nn.modules.batchnorm.BatchNorm2d):
-            print_size_info(name, 'BatchNorm', sizes)
-            sizes.pop(0)
             opts['eps'] = module.eps
             opts['use_global_stats'] = module.affine
             opts['moving_average_fraction'] = module.momentum
-            layer = pl.PTBatchNorm(name, in_vars, out_vars, **opts)
-            layers.append(layer)
+            layers.append(pl.PTBatchNorm(*args, **opts))
+            state = update_size_info(name, 'BatchNorm', state)
 
         elif isinstance(module, torch.nn.modules.activation.ReLU):
-            print_size_info(name, 'ReLU', sizes)
-            sizes.pop(0)
-            layer = pl.PTReLU(name, in_vars, out_vars)
-            layers.append(layer)
+            layers.append(pl.PTReLU(*args))
+            state = update_size_info(name, 'ReLU', state)
 
         elif isinstance(module, torch.nn.modules.dropout.Dropout):
-            print_size_info(name, 'Dropout', sizes)
-            sizes.pop(0)
             if keepDropout:
                 opts['ratio'] = module.p # TODO: check that this shouldn't be 1 - p
-                layer = pl.PTDropout(name, in_vars, out_vars, **opts)
-                layers.append(layer)
+                layers.append(pl.PTDropout(*args, **opts))
+                state = update_size_info(name, 'Dropout', state)
             else:
-                out_vars = in_vars
+                state['out_vars'] = state['in_vars']
 
         elif isinstance(module, torch.nn.modules.pooling.MaxPool2d):
-            print_size_info(name, 'MaxPool', sizes)
-            sizes.pop(0)
+            state = update_size_info(name, 'MaxPool', state)
             opts['method'] = 'max'
             opts['pad'] = module.padding
             opts['stride'] = module.stride
             opts['kernel_size'] = module.kernel_size
-            layer = pl.PTPooling(name, in_vars, out_vars, **opts)
-            layers.append(layer)
+            layers.append(pl.PTPooling(*args, **opts))
 
         elif isinstance(module, torch.nn.modules.pooling.AvgPool2d):
-            print_size_info(name, 'AvgPool', sizes)
+            state = update_size_info(name, 'AvgPool', state)
             sizes.pop(0)
             opts['method'] = 'avg'
             opts['pad'] = module.padding
             opts['stride'] = module.stride
             opts['kernel_size'] = module.kernel_size
-            layer = pl.PTPooling(name, in_vars, out_vars, **opts)
-            layers.append(layer)
+            layers.append(pl.PTPooling(*args, **opts))
 
         elif isinstance(module, torch.nn.modules.linear.Linear):
-            ipdb.set_trace()
-            print('{}: Linear, output size: {}'.format(name, sizes.pop(0)))
+            print('prefix: {}'.format(state['prefix']))
+            state = update_size_info(name, 'Linear', state)
             opts['bias_term'] = bool(module.bias)
             opts['num_output'] = module.out_features
             opts['kernel_size'] = [1,1]
@@ -232,98 +245,98 @@ def construct_layers(graph, in_vars, prefix='', sizes=[]):
             opts['stride'] = [1,1]
             opts['dilation'] = [1,1]
             opts['group'] = 1
-            layer = pl.PTConv(name, in_vars, out_vars, **opts)
-            layers.append(layer)
+            layers.append(pl.PTConv(*args, **opts))
             
         elif isinstance(module, torchvision.models.resnet.Bottleneck):
-            #print('processing bottleneck: {}'.format(name))
-            layers_ = process_custom_module(name, module, in_vars, sizes) # soz Guido
+            layers_ = process_custom_module(name, module, state) # soz Guido
             layers.extend(layers_)
 
         elif isinstance(module, torch.nn.modules.container.Sequential):
             print('flattening sequence: {}'.format(name))
             children = list(module.named_children())
-            layers_,sizes = construct_layers(children, in_vars=in_vars, 
-                                             prefix=name, sizes=sizes)
-            out_vars = layers_[-1].outputs
+            prefix_ = state['prefix'] ; state['prefix'] = name
+            layers_,state = construct_layers(children, state)
+            state['out_vars'] = layers_[-1].outputs 
+            state['prefix'] = prefix_ # restore prefix
             layers.extend(layers_)
+
         elif type(module) in supported_models:
             pass
         else:
             raise ValueError('unrecognised module {}'.format(type(module)))
-        in_vars = out_vars
-    return layers, sizes
+        state['in_vars'] = state['out_vars']
+    return layers, state
 
 mods = list(net.modules())
 graph = mods[0].named_children()
-in_vars = ['data',]
-layers = construct_layers(graph, in_vars=in_vars, sizes=sizes)
+state = {'in_vars': ['data'], 'sizes': sizes, 'prefix': ''}
+layers,_ = construct_layers(graph, state)
 
 # load layers into model and set params
-# ptmodel = pl.PTModel()
-# for layer in layers:
-    # name = layer.name
-    # ptmodel.add_layer(layer)
-    # layer.setTensor(ptmodel, params)
-    # # load parameter values
-    # print('{} has type: {}'.format(name, type(layer)))
+ptmodel = pl.PTModel()
+for layer in layers:
+    name = layer.name
+    ptmodel.add_layer(layer)
+    layer.setTensor(ptmodel, params)
+    # load parameter values
+    print('{} has type: {}'.format(name, type(layer)))
 
-# for l in layers:
-   # print('---------')
-   # print('name', l.name)
-   # print('inputs', l.inputs)
-   # print('outputs', l.outputs)
+for l in layers:
+   print('---------')
+   print('name', l.name)
+   print('inputs', l.inputs)
+   print('outputs', l.outputs)
 
-# # --------------------------------------------------------------------
-# #                                                        Normalization
-# # --------------------------------------------------------------------
+# --------------------------------------------------------------------
+#                                                        Normalization
+# --------------------------------------------------------------------
 
-# # standard normalization for vision models in pytorch
-# average_image = np.array((0.485, 0.456, 0.406),dtype='float')
-# image_std = np.array((0.229, 0.224, 0.225), dtype='float') 
+# standard normalization for vision models in pytorch
+average_image = np.array((0.485, 0.456, 0.406),dtype='float')
+image_std = np.array((0.229, 0.224, 0.225), dtype='float') 
 
-# minputs = np.empty(shape=[0,], dtype=pl.minputdt)
-# dataShape = [224,224,3] # hardcode as a temp fix
-# fullImageSize = [256, 256]
-# print('Input image data tensor shape:', dataShape)
-# print('Full input image size:', fullImageSize)
+minputs = np.empty(shape=[0,], dtype=pl.minputdt)
+dataShape = [224,224,3] # hardcode as a temp fix
+fullImageSize = [256, 256]
+print('Input image data tensor shape:', dataShape)
+print('Full input image size:', fullImageSize)
 
-# mnormalization = {
-  # 'imageSize': pl.row(dataShape),
-  # 'averageImage': average_image,
-  # 'imageStd': image_std, 
-  # 'interpolation': 'bilinear',
-  # 'keepAspect': True,
-  # 'border': pl.row([0,0]),
-  # 'cropSize': 1.0}
+mnormalization = {
+  'imageSize': pl.row(dataShape),
+  'averageImage': average_image,
+  'imageStd': image_std, 
+  'interpolation': 'bilinear',
+  'keepAspect': True,
+  'border': pl.row([0,0]),
+  'cropSize': 1.0}
 
-# # --------------------------------------------------------------------
-# #                                                    Convert to MATLAB
-# # --------------------------------------------------------------------
+# --------------------------------------------------------------------
+#                                                    Convert to MATLAB
+# --------------------------------------------------------------------
 
-# # net.meta
-# meta_dict = {'inputs': minputs.reshape(1,-1), 'normalization': mnormalization}
-# mmeta = pl.dictToMatlabStruct(meta_dict)
+# net.meta
+meta_dict = {'inputs': minputs.reshape(1,-1), 'normalization': mnormalization}
+mmeta = pl.dictToMatlabStruct(meta_dict)
 
-# # This object should stay a dictionary and not a NumPy array due to
-# # how NumPy saves to MATLAB
-# mnet = {'layers': np.empty(shape=[0,], dtype=pl.mlayerdt),
-        # 'params': np.empty(shape=[0,], dtype=pl.mparamdt),
-        # 'meta': mmeta}
+# This object should stay a dictionary and not a NumPy array due to
+# how NumPy saves to MATLAB
+mnet = {'layers': np.empty(shape=[0,], dtype=pl.mlayerdt),
+        'params': np.empty(shape=[0,], dtype=pl.mparamdt),
+        'meta': mmeta}
 
-# for layer in ptmodel.layers.values():
-    # mnet['layers'] = np.append(mnet['layers'], layer.toMatlab(), axis=0)
+for layer in ptmodel.layers.values():
+    mnet['layers'] = np.append(mnet['layers'], layer.toMatlab(), axis=0)
  
-# for param in ptmodel.params.values():
-    # mnet['params'] = np.append(mnet['params'], param.toMatlab(), axis=0)
+for param in ptmodel.params.values():
+    mnet['params'] = np.append(mnet['params'], param.toMatlab(), axis=0)
 
-# # to row
-# mnet['layers'] = mnet['layers'].reshape(1,-1)
-# mnet['params'] = mnet['params'].reshape(1,-1)
+# to row
+mnet['layers'] = mnet['layers'].reshape(1,-1)
+mnet['params'] = mnet['params'].reshape(1,-1)
 
-# # --------------------------------------------------------------------
-# #                                                          Save output
-# # --------------------------------------------------------------------
+# --------------------------------------------------------------------
+#                                                          Save output
+# --------------------------------------------------------------------
 
-# print('Saving network to {}'.format(save_path))
-# scipy.io.savemat(save_path, mnet, oned_as='column')
+print('Saving network to {}'.format(save_path))
+scipy.io.savemat(save_path, mnet, oned_as='column')

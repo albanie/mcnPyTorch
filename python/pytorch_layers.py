@@ -428,7 +428,7 @@ class PTConcat(PTLayer):
 
     def display(self):
         super().display()
-        print("  Concat Dim: ", self.concatDim)
+        print('  Concat Dim: ', self.concatDim)
 
     def setTensor(self, model, all_params):
         pass
@@ -455,4 +455,40 @@ class PTDropout(PTElementWise):
 
     def display(self):
         super(PTDropout, self).display()
-        print('  c- ratio (dropout rate):', self.ratio)
+
+class PTFlatten(PTLayer):
+    def __init__(self, name, inputs, outputs, axis):
+        super().__init__(name, inputs, outputs)
+        self.axis = 3
+
+    def display(self):
+        super(PTFlatten, self).display()
+        print('  c- axis: {}'.format(self.axis))
+
+    def reshape(self, model):
+        varin = model.vars[self.inputs[0]]
+        varout = model.vars[self.outputs[0]]
+        return
+        if not varin.shape: return
+        varout.shape = getFilterOutputSize(varin.shape[0:2],
+                                           self.kernel_size,
+                                           self.stride,
+                                           self.pad) \
+                                           + [self.num_output, varin.shape[3]]
+        self.filter_depth = varin.shape[2] / self.group
+
+    def getTransforms(self, model):
+        return [[getFilterTransform(self.kernel_size, self.stride, self.pad)]]
+
+    def setTensor(self, model, all_params):
+        pass
+
+    def transpose(self, model):
+        pass
+
+    def toMatlab(self):
+        mlayer = super(PTFlatten, self).toMatlab()
+        mlayer['type'][0] = u'dagnn.Flatten'
+        mlayer['block'][0] = dictToMatlabStruct(
+            {'axis': self.axis})
+        return mlayer
