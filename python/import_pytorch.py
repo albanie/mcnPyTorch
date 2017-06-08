@@ -175,12 +175,19 @@ def construct_layers(graph, state):
         if name == 'classifier': 
             # special case - flattening is done in the network class, rather 
             # than in the moudles with pytorch, so we need to 'catch' this event 
+            # and reproduce it in the mcn sense.  The reshape is essentially free, 
+            # but the permute can add some overhead
             if state['prefix']: name = '{}_{}'.format(state['prefix'], name)
-            opts['axis'] = 3
-            name_ = '{}_flatten'.format(name)
-            state['out_vars'] = [name_]
-            args = [name_, state['in_vars'], state['out_vars']]
-            layers.append(pl.PTFlatten(*args, **opts))
+            name_perm = '{}_permute'.format(name)
+            state['out_vars'] = [name_perm]
+            args = [name_perm, state['in_vars'], state['out_vars']]
+            layers.append(pl.PTPermute(*args, order=[2,1,3,4]))
+            state['in_vars'] = state['out_vars']
+
+            name_flat = '{}_flatten'.format(name)
+            state['out_vars'] = [name_flat]
+            args = [name_flat, state['in_vars'], state['out_vars']]
+            layers.append(pl.PTFlatten(*args, axis=3))
             state['in_vars'] = state['out_vars']
 
         opts = {} 

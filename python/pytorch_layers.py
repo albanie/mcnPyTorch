@@ -48,7 +48,10 @@ def pt_tensor_to_array(tensor):
     """
     dims = tolist(tensor.size())
     raw = tensor.numpy()
-    return raw.reshape(dims).transpose()
+    if len(dims) == 4:
+        return raw.transpose((2,3,1,0))
+    else:
+        return raw.transpose() 
 
 def dictToMatlabStruct(d): 
     if not d: return np.zeros((0,))
@@ -491,4 +494,41 @@ class PTFlatten(PTLayer):
         mlayer['type'][0] = u'dagnn.Flatten'
         mlayer['block'][0] = dictToMatlabStruct(
             {'axis': self.axis})
+        return mlayer
+
+class PTPermute(PTLayer):
+    def __init__(self, name, inputs, outputs, order):
+        super().__init__(name, inputs, outputs)
+        self.order = order
+
+    def display(self):
+        super().display()
+        print('  c- order %s'.format(self.order))
+
+    def reshape(self, model):
+        varin = model.vars[self.inputs[0]]
+        varout = model.vars[self.outputs[0]]
+        return
+        if not varin.shape: return
+        varout.shape = getFilterOutputSize(varin.shape[0:2],
+                                           self.kernel_size,
+                                           self.stride,
+                                           self.pad) \
+                                           + [self.num_output, varin.shape[3]]
+        self.filter_depth = varin.shape[2] / self.group
+
+    def getTransforms(self, model):
+        return [[getFilterTransform(self.kernel_size, self.stride, self.pad)]]
+
+    def setTensor(self, model, all_params):
+        pass
+
+    def transpose(self, model):
+        pass
+
+    def toMatlab(self):
+        mlayer = super().toMatlab()
+        mlayer['type'][0] = u'dagnn.Permute'
+        mlayer['block'][0] = dictToMatlabStruct(
+            {'order': self.order})
         return mlayer
