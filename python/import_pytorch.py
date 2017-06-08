@@ -9,8 +9,9 @@ from collections import OrderedDict
 import pytorch_layers as pl
 from torch.autograd import Variable
 from ast import literal_eval as make_tuple
+import ipdb
 
-debug = 1
+debug = 0
 
 if debug:
     from IPython import get_ipython
@@ -23,7 +24,6 @@ if debug:
     sys.excepthook = ultratb.FormattedTB(mode='Verbose',
          color_scheme='Linux', call_pdb=1)
 
-    import ipdb
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -60,10 +60,6 @@ parser.add_argument('--average-value',
                     nargs='?',
                     default=None,
                     help='Average image value')
-parser.add_argument('--class-names',
-                    type=str,
-                    nargs='?',
-                    help='Class names')
 parser.add_argument('--remove-dropout',
                     dest='remove_dropout',
                     action='store_true',
@@ -80,11 +76,9 @@ parser.add_argument('--append-softmax',
 parser.set_defaults(remove_dropout=False)
 parser.set_defaults(remove_loss=False)
 args = parser.parse_args()
-print(args)
-
-args.image_size = tuple(make_tuple(args.image_size))
 
 # forward pass to compute pytorch feature sizes
+args.image_size = tuple(make_tuple(args.image_size))
 im = scipy.misc.face()
 im = scipy.misc.imresize(im, args.image_size)
 
@@ -97,18 +91,17 @@ if debug:
 
 # params = torch.load(str(vgg))
 
-# N,C,H,W
-# alexnet = models.alexnet(pretrained=True)
-# vgg = models.vgg16(pretrained=True)
-# params = alexnet.state_dict()
-
 if args.is_torchvision_model:
     if args.input == 'alexnet':
         net = torchvision.models.alexnet(pretrained=True)
     elif args.input == 'vgg11':
         net = torchvision.models.vgg11(pretrained=True)
+    elif args.input == 'vgg13':
+        net = torchvision.models.vgg13(pretrained=True)
     elif args.input == 'vgg16':
         net = torchvision.models.vgg16(pretrained=True)
+    elif args.input == 'vgg19':
+        net = torchvision.models.vgg19(pretrained=True)
     elif args.input == 'resnet50':
         net = torchvision.models.resnet50(pretrained=True)
     else:
@@ -120,7 +113,7 @@ transform = pl.ImTransform(args.image_size, (104, 117, 123), (2, 0, 1))
 x = Variable(transform(im).unsqueeze(0))
 y = net(x)
 
-supported_models = [torchvision.models.resnet.ResNet]
+supported_models = [torchvision.models.resnet.ResNet] # TODO clean up
 params = net.state_dict()
 
 # this is probably silly, but I don't know enough about how pyTorch
@@ -137,9 +130,10 @@ rand_feats = np.random.random(feat_sizes[-1])
 x = Variable(torch.from_numpy(rand_feats)).float()
 x = x.view(x.size(0), -1)
 cls_sizes = get_feat_sizes(net.classifier, x, sizes=[])
-ipdb.set_trace()
+#flatten_sizes = [1, np.prod(feat_sizes[-1])] # flatten from last features 
 sizes = feat_sizes + cls_sizes
 
+sz_ = feat_sizes + cls_sizes
 if debug:
     for sz in sizes:
         print(sz)
@@ -225,6 +219,7 @@ def construct_layers(graph, state):
             pargs = [name_flat, state['in_vars'], state['out_vars']]
             layers.append(pl.PTFlatten(*pargs, axis=3))
             state['in_vars'] = state['out_vars']
+            state = update_size_info(name, 'mcn-flatten', state)
 
         opts = {} 
         if state['prefix']: name = '{}_{}'.format(state['prefix'], name)
@@ -257,9 +252,9 @@ def construct_layers(graph, state):
             if not args.remove_dropout:
                 opts['ratio'] = module.p # TODO: check that this shouldn't be 1 - p
                 layers.append(pl.PTDropout(*pargs, **opts))
-                state = update_size_info(name, 'Dropout', state)
             else:
                 state['out_vars'] = state['in_vars']
+            state = update_size_info(name, 'Dropout', state)
 
         elif isinstance(module, torch.nn.modules.pooling.MaxPool2d):
             state = update_size_info(name, 'MaxPool', state)

@@ -1,11 +1,15 @@
-import ipdb
+# Layers and helper methods for pytorch model conversion
+# based on Andrea Vedaldi's caffe-importer scripts
+#
+# author: Samuel Albanie
+
 import torch
 import cv2
 import numpy as np
 from collections import OrderedDict
 
 # --------------------------------------------------------------------
-#                                                             Helpers
+#                                                     Helpers Functions
 # --------------------------------------------------------------------
 
 numerics = (int,float)
@@ -255,9 +259,6 @@ class PTConv(PTLayer):
                                            + [self.num_output, varin.shape[3]]
         self.filter_depth = varin.shape[2] / self.group
 
-    def getTransforms(self, model):
-        return [[getFilterTransform(self.kernel_size, self.stride, self.pad)]]
-
     def setTensor(self, model, all_params):
         filters = pt_tensor_to_array(all_params['{}_weight'.format(self.name)])
         while len(filters.shape) < 4 : # handle torch FC tensors
@@ -396,40 +397,9 @@ class PTPooling(PTLayer):
         print('  c- kernel_size: %s' % (self.kernel_size,))
         print('  c- stride: %s' % (self.stride,))
 
-    def reshape(self, model):
-        ipdb.set_trace()
-        shape = model.vars[self.inputs[0]].shape
-        if not shape: return
-        # MatConvNet uses a slighly different definition of padding, which we think
-        # is the correct one (it corresponds to the filters)
-        self.pad_corrected = copy.deepcopy(self.pad)
-        for i in [0, 1]:
-            self.pad_corrected[1 + i*2] = min(
-                self.pad[1 + i*2] + self.stride[i] - 1,
-                self.kernel_size[i] - 1)
-        model.vars[self.outputs[0]].shape = \
-            getFilterOutputSize(shape[0:2],
-                                self.kernel_size,
-                                self.stride,
-                                self.pad_corrected) + shape[2:5]
-
-    def getTransforms(self, model):
-        return [[getFilterTransform(self.kernel_size, self.stride, self.pad)]]
-
-    def transpose(self, model):
-        self.kernel_size = reorder(self.kernel_size, [1,0])
-        self.stride = reorder(self.stride, [1,0])
-        self.pad = reorder(self.pad, [2,3,0,1])
-        if self.pad_corrected:
-            self.pad_corrected = reorder(self.pad_corrected, [2,3,0,1])
-
     def toMatlab(self):
         mlayer = super().toMatlab()
-        if not self.pad_corrected:
-            print('Warning: pad correction for layer {} could not be ' \
-                 'computed because the layer input shape could not be '  \
-                  'determined'.format(self.name))
-            self.pad_corrected = self.pad # tmp fix
+        self.pad_corrected = self.pad # TODO(sam): This may require a fix
         mlayer['type'][0] = u'dagnn.Pooling'
         mlayer['block'][0] = dictToMatlabStruct(
             {'method': self.method,
@@ -437,10 +407,6 @@ class PTPooling(PTLayer):
              'stride': row(self.stride),
              'pad': row(self.pad_corrected)})
         return mlayer
-
-# --------------------------------------------------------------------
-#                                                               Concat
-# --------------------------------------------------------------------
 
 class PTConcat(PTLayer):
     def __init__(self, name, inputs, outputs, concatDim):
@@ -486,25 +452,7 @@ class PTFlatten(PTLayer):
         super(PTFlatten, self).display()
         print('  c- axis: {}'.format(self.axis))
 
-    def reshape(self, model):
-        varin = model.vars[self.inputs[0]]
-        varout = model.vars[self.outputs[0]]
-        return
-        if not varin.shape: return
-        varout.shape = getFilterOutputSize(varin.shape[0:2],
-                                           self.kernel_size,
-                                           self.stride,
-                                           self.pad) \
-                                           + [self.num_output, varin.shape[3]]
-        self.filter_depth = varin.shape[2] / self.group
-
-    def getTransforms(self, model):
-        return [[getFilterTransform(self.kernel_size, self.stride, self.pad)]]
-
     def setTensor(self, model, all_params):
-        pass
-
-    def transpose(self, model):
         pass
 
     def toMatlab(self):
@@ -535,13 +483,7 @@ class PTPermute(PTLayer):
                                            + [self.num_output, varin.shape[3]]
         self.filter_depth = varin.shape[2] / self.group
 
-    def getTransforms(self, model):
-        return [[getFilterTransform(self.kernel_size, self.stride, self.pad)]]
-
     def setTensor(self, model, all_params):
-        pass
-
-    def transpose(self, model):
         pass
 
     def toMatlab(self):
