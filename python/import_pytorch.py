@@ -1,42 +1,96 @@
-import sys
-
-from IPython import get_ipython
-ipython = get_ipython()
-ipython.magic('load_ext autoreload')
-ipython.magic('autoreload 2')
-
-# breakpoint on exception
-from IPython.core import ultratb
-sys.excepthook = ultratb.FormattedTB(mode='Verbose',
-     color_scheme='Linux', call_pdb=1)
-
-import matplotlib, os
-import copy
-matplotlib.use('Agg')
-
-
-import matplotlib.pyplot as plt
-path = os.path.expanduser('~/coding/src/zsvision/python')
-sys.path.insert(0, path) # lazy
-from zsvision.zs_iterm import zs_dispFig
-
+import sys, os, copy
+import argparse
 import torch
 from pathlib import Path
 import numpy as np
 import scipy.io
-import cv2
-import ipdb
 import torchvision
 from collections import OrderedDict
 import pytorch_layers as pl
 from torch.autograd import Variable
+from ast import literal_eval as make_tuple
 
-# forward pass to compute sizes
+debug = 1
+
+if debug:
+    from IPython import get_ipython
+    ipython = get_ipython()
+    ipython.magic('load_ext autoreload')
+    ipython.magic('autoreload 2')
+
+    # breakpoint on exception
+    from IPython.core import ultratb
+    sys.excepthook = ultratb.FormattedTB(mode='Verbose',
+         color_scheme='Linux', call_pdb=1)
+
+    import ipdb
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    path = os.path.expanduser('~/coding/src/zsvision/python')
+    sys.path.insert(0, path) # lazy
+    from zsvision.zs_iterm import zs_dispFig
+
+parser = argparse.ArgumentParser(
+           description='Convert model from PyTorch to MatConvNet.')
+parser.add_argument('input',
+                    type=str,
+                    help='The input should be the name of a pytorch model \
+                      (if present in pytorch.visionmodels), otherwise it \
+                      should be a path to its .pth file')
+parser.add_argument('output',
+                    type=str,
+                    help='Output MATLAB file')
+parser.add_argument('--image-size',
+                    type=str,
+                    nargs='?',
+                    default='[224,224]',
+                    help='Size of the input image')
+parser.add_argument('--is-torchvision-model',
+                    type=bool,
+                    nargs='?',
+                    default=True,
+                    help='is the model part of the torchvision.models')
+parser.add_argument('--average-image',
+                    type=argparse.FileType('rb'),
+                    nargs='?',
+                    help='Average image')
+parser.add_argument('--average-value',
+                    type=str,
+                    nargs='?',
+                    default=None,
+                    help='Average image value')
+parser.add_argument('--class-names',
+                    type=str,
+                    nargs='?',
+                    help='Class names')
+parser.add_argument('--remove-dropout',
+                    dest='remove_dropout',
+                    action='store_true',
+                    help='Remove dropout layers')
+parser.add_argument('--remove-loss',
+                    dest='remove_loss',
+                    action='store_true',
+                    help='Remove loss layers')
+parser.add_argument('--append-softmax',
+                    dest='append_softmax',
+                    action='append',
+                    default=[],
+                    help='Add a softmax layer after the specified layer')
+parser.set_defaults(remove_dropout=False)
+parser.set_defaults(remove_loss=False)
+args = parser.parse_args()
+print(args)
+
+args.image_size = tuple(make_tuple(args.image_size))
+
+# forward pass to compute pytorch feature sizes
 im = scipy.misc.face()
-im = scipy.misc.imresize(im, [227,227])
-plt.imshow(im) 
-zs_dispFig()
+im = scipy.misc.imresize(im, args.image_size)
 
+if debug:
+    plt.imshow(im) 
+    zs_dispFig()
 
 # model_dir = Path('/users/albanie/coding/libs/convert_torch_to_pytorch/models')
 # vgg = model_dir / 'vgg16-397923af.pth'
@@ -47,47 +101,27 @@ zs_dispFig()
 # alexnet = models.alexnet(pretrained=True)
 # vgg = models.vgg16(pretrained=True)
 # params = alexnet.state_dict()
-keepDropout = False
-target = 'alexnet'
-save_path = '../models/{}-mcn.mat'.format(target)
 
-class ImTransform(object):
-    """
-    resize (int): input dims
-    rgb ((int,int,int)): average RGB of the dataset (104,117,123)
-    """
-    def __init__(self, imsz, rgb, swap=(2, 0, 1)):
-        self.mean_im = rgb
-        self.imsz = imsz
-        self.swap = swap
-
-    def __call__(self, im):
-        im = cv2.resize(np.array(im), self.imsz).astype(np.float32)
-        im -= self.mean_im
-        print(im.shape)
-        im = im.transpose(self.swap)
-        return torch.from_numpy(im)
-
-# --------------------------------------------------------------------
-#                                                          Load layers
-# --------------------------------------------------------------------
-supported_models = [torchvision.models.resnet.ResNet]
-
-if target == 'alexnet':
-    net = torchvision.models.alexnet(pretrained=True)
-    imsz = (227, 227)
-elif target == 'vgg16':
-    net = torchvision.models.vgg16(pretrained=True)
-elif target == 'resnet50':
-    net = torchvision.models.resnet50(pretrained=True)
+if args.is_torchvision_model:
+    if args.input == 'alexnet':
+        net = torchvision.models.alexnet(pretrained=True)
+    elif args.input == 'vgg11':
+        net = torchvision.models.vgg11(pretrained=True)
+    elif args.input == 'vgg16':
+        net = torchvision.models.vgg16(pretrained=True)
+    elif args.input == 'resnet50':
+        net = torchvision.models.resnet50(pretrained=True)
+    else:
+        raise ValueError('{} unrecognised torchvision model'.format(args.input))
 else:
-    raise ValueError('target not recognised')
+    raise ValueError
 
-params = net.state_dict()
-
-transform = ImTransform(imsz, (104, 117, 123), (2, 0, 1))
+transform = pl.ImTransform(args.image_size, (104, 117, 123), (2, 0, 1))
 x = Variable(transform(im).unsqueeze(0))
 y = net(x)
+
+supported_models = [torchvision.models.resnet.ResNet]
+params = net.state_dict()
 
 # this is probably silly, but I don't know enough about how pyTorch
 # works to do it sensibly
@@ -100,15 +134,15 @@ def get_feat_sizes(net, x, sizes=[]):
    
 feat_sizes = get_feat_sizes(net.features, x, sizes=[])
 rand_feats = np.random.random(feat_sizes[-1])
-
 x = Variable(torch.from_numpy(rand_feats)).float()
 x = x.view(x.size(0), -1)
 cls_sizes = get_feat_sizes(net.classifier, x, sizes=[])
-
+ipdb.set_trace()
 sizes = feat_sizes + cls_sizes
 
-for sz in sizes:
-    print(sz)
+if debug:
+    for sz in sizes:
+        print(sz)
 
 # rename keys to make compatible (duplicates params)
 tmp = OrderedDict()
@@ -157,6 +191,8 @@ def update_size_info(name, module, state, pop_first=1):
     in_sz, out_sz = state['sizes'][:2]
     print(' +  size: {} -> {}'.format(in_sz, out_sz))
     if module in ['ReLU', 'BatchNorm']:
+        if in_sz != out_sz:
+            ipdb.set_trace()
         assert in_sz == out_sz, 'sizes should match for {}'.format(module)
     if pop_first:
         state['sizes'].pop(0)
@@ -180,20 +216,20 @@ def construct_layers(graph, state):
             if state['prefix']: name = '{}_{}'.format(state['prefix'], name)
             name_perm = '{}_permute'.format(name)
             state['out_vars'] = [name_perm]
-            args = [name_perm, state['in_vars'], state['out_vars']]
-            layers.append(pl.PTPermute(*args, order=[2,1,3,4]))
+            pargs = [name_perm, state['in_vars'], state['out_vars']]
+            layers.append(pl.PTPermute(*pargs, order=[2,1,3,4]))
             state['in_vars'] = state['out_vars']
 
             name_flat = '{}_flatten'.format(name)
             state['out_vars'] = [name_flat]
-            args = [name_flat, state['in_vars'], state['out_vars']]
-            layers.append(pl.PTFlatten(*args, axis=3))
+            pargs = [name_flat, state['in_vars'], state['out_vars']]
+            layers.append(pl.PTFlatten(*pargs, axis=3))
             state['in_vars'] = state['out_vars']
 
         opts = {} 
         if state['prefix']: name = '{}_{}'.format(state['prefix'], name)
         state['out_vars'] = [name]
-        args = [name, state['in_vars'], state['out_vars']]
+        pargs = [name, state['in_vars'], state['out_vars']]
 
         if isinstance(module, torch.nn.modules.conv.Conv2d):
             opts['bias_term'] = bool(module.bias)
@@ -203,24 +239,24 @@ def construct_layers(graph, state):
             opts['stride'] = module.stride
             opts['dilation'] = module.dilation
             opts['group'] = module.groups
-            layers.append(pl.PTConv(*args, **opts))
+            layers.append(pl.PTConv(*pargs, **opts))
             state = update_size_info(name, 'Conv2d', state)
 
         elif isinstance(module, torch.nn.modules.batchnorm.BatchNorm2d):
             opts['eps'] = module.eps
             opts['use_global_stats'] = module.affine
             opts['moving_average_fraction'] = module.momentum
-            layers.append(pl.PTBatchNorm(*args, **opts))
+            layers.append(pl.PTBatchNorm(*pargs, **opts))
             state = update_size_info(name, 'BatchNorm', state)
 
         elif isinstance(module, torch.nn.modules.activation.ReLU):
-            layers.append(pl.PTReLU(*args))
+            layers.append(pl.PTReLU(*pargs))
             state = update_size_info(name, 'ReLU', state)
 
         elif isinstance(module, torch.nn.modules.dropout.Dropout):
-            if keepDropout:
+            if not args.remove_dropout:
                 opts['ratio'] = module.p # TODO: check that this shouldn't be 1 - p
-                layers.append(pl.PTDropout(*args, **opts))
+                layers.append(pl.PTDropout(*pargs, **opts))
                 state = update_size_info(name, 'Dropout', state)
             else:
                 state['out_vars'] = state['in_vars']
@@ -231,7 +267,7 @@ def construct_layers(graph, state):
             opts['pad'] = module.padding
             opts['stride'] = module.stride
             opts['kernel_size'] = module.kernel_size
-            layers.append(pl.PTPooling(*args, **opts))
+            layers.append(pl.PTPooling(*pargs, **opts))
 
         elif isinstance(module, torch.nn.modules.pooling.AvgPool2d):
             state = update_size_info(name, 'AvgPool', state)
@@ -240,19 +276,20 @@ def construct_layers(graph, state):
             opts['pad'] = module.padding
             opts['stride'] = module.stride
             opts['kernel_size'] = module.kernel_size
-            layers.append(pl.PTPooling(*args, **opts))
+            layers.append(pl.PTPooling(*pargs, **opts))
 
         elif isinstance(module, torch.nn.modules.linear.Linear):
             print('prefix: {}'.format(state['prefix']))
             state = update_size_info(name, 'Linear', state)
             opts['bias_term'] = bool(module.bias)
+            opts['filter_depth'] = module.in_features
             opts['num_output'] = module.out_features
             opts['kernel_size'] = [1,1]
             opts['pad'] = [0,0]
             opts['stride'] = [1,1]
             opts['dilation'] = [1,1]
             opts['group'] = 1
-            layers.append(pl.PTConv(*args, **opts))
+            layers.append(pl.PTConv(*pargs, **opts))
             
         elif isinstance(module, torchvision.models.resnet.Bottleneck):
             layers_ = process_custom_module(name, module, state) # soz Guido
@@ -284,15 +321,14 @@ ptmodel = pl.PTModel()
 for layer in layers:
     name = layer.name
     ptmodel.add_layer(layer)
-    layer.setTensor(ptmodel, params)
     # load parameter values
-    print('{} has type: {}'.format(name, type(layer)))
-
-for l in layers:
-   print('---------')
-   print('name', l.name)
-   print('inputs', l.inputs)
-   print('outputs', l.outputs)
+    layer.setTensor(ptmodel, params)
+    if debug:
+        print('---------')
+        print('{} has type: {}'.format(name, type(layer)))
+        print('name', l.name)
+        print('inputs', l.inputs)
+        print('outputs', l.outputs)
 
 # --------------------------------------------------------------------
 #                                                        Normalization
@@ -342,8 +378,8 @@ mnet['layers'] = mnet['layers'].reshape(1,-1)
 mnet['params'] = mnet['params'].reshape(1,-1)
 
 # --------------------------------------------------------------------
-#                                                          Save output
+#                                                  Save converted model
 # --------------------------------------------------------------------
 
-print('Saving network to {}'.format(save_path))
-scipy.io.savemat(save_path, mnet, oned_as='column')
+print('Saving network to {}'.format(args.output))
+scipy.io.savemat(args.output, mnet, oned_as='column')

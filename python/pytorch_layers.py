@@ -1,5 +1,6 @@
 import ipdb
 import torch
+import cv2
 import numpy as np
 from collections import OrderedDict
 
@@ -64,6 +65,22 @@ def dictToMatlabStruct(d):
     for x in d.keys():
         y[x][0] = d[x]
     return y
+
+class ImTransform(object):
+    """
+    resize (int): input dims
+    rgb ((int,int,int)): average RGB of the dataset (104,117,123)
+    """
+    def __init__(self, imsz, rgb, swap=(2, 0, 1)):
+        self.mean_im = rgb
+        self.imsz = imsz
+        self.swap = swap
+
+    def __call__(self, im):
+        im = cv2.resize(np.array(im), self.imsz).astype(np.float32)
+        im -= self.mean_im
+        im = im.transpose(self.swap)
+        return torch.from_numpy(im)
 
 # --------------------------------------------------------------------
 #                                              PyTorch Aggregator class
@@ -193,7 +210,8 @@ class PTConv(PTLayer):
                  kernel_size,
                  stride,
                  dilation,
-                 group):
+                 group, 
+		 filter_depth=None):
 
         super().__init__(name, inputs, outputs)
 
@@ -213,7 +231,7 @@ class PTConv(PTLayer):
 
         self.params = [name + '_filter']
         if bias_term: self.params.append(name + '_bias')
-        self.filter_depth = None
+        self.filter_depth = filter_depth
 
     def display(self):
         super(PTConv, self).display()
