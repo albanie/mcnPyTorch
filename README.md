@@ -32,8 +32,8 @@ with the following three commands from the root directory of your MatConvNet
 installation:
 
 ```
-vl_contrib('install', 'mcnSSD', 'contribUrl', 'github.com/albanie/matconvnet-contrib-test/') ;
-vl_contrib('setup', 'mcnSSD', 'contribUrl', 'github.com/albanie/matconvnet-contrib-test/') ;
+vl_contrib('install', 'mcnPyTorch', 'contribUrl', 'github.com/albanie/matconvnet-contrib-test/') ;
+vl_contrib('setup', 'mcnPyTorch', 'contribUrl', 'github.com/albanie/matconvnet-contrib-test/') ;
 ```
 
 **Depedencies**: `Python3` and `PyTorch`, and a few other modules which should be easy to install with `conda`.
