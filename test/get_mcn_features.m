@@ -1,7 +1,12 @@
-function feats = get_mcn_features(im, imsz)
+function feats = get_mcn_features(modelPath, im, imsz)
 %GET_MCN_FEATURES - compute all activations for a model
 
 fprintf('running in matlab\n') ;
+
+% hack
+path = getenv('LD_LIBRARY_PATH') ;
+path = [ '/users/albanie/local/compat/cuda-7.5/lib:/users/albanie/local/compat/cuda-7.5/lib:' path ] ;
+setenv('LD_LIBRARY_PATH', path) ;
 
 % setup
 addpath('~/coding/libs/matconvnets/contrib-matconvnet/matlab') ;
@@ -10,10 +15,7 @@ addpath(fullfile(vl_rootnn, 'contrib/mcnPyTorch/matlab')) ;
 debug = 0 ;
 
 % load model
-model = 'alexnet-mcn.mat' ;
-modelDir = fullfile(vl_rootnn, 'contrib/mcnPyTorch/models') ;
-net = load(fullfile(modelDir, model)) ;
-dag = dagnn.DagNN.loadobj(net) ;
+dag = dagnn.DagNN.loadobj(load(modelPath)) ;
 
 % reshape image
 im = single(cell2mat(im)) ; % input im is in pyTorch format (CxHxW)

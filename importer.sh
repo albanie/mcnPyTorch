@@ -1,3 +1,4 @@
+import_dir="models"
 refresh_models=false
 test_imported_models=true # (requires matlab.engine)
 
@@ -7,9 +8,8 @@ popd > /dev/null
 
 function convert_model()
 {
-    import_dir=$1
-    pytorch_model=$2
-    mcn_model_path="${import_dir}/${pytorch_model}-mcn.mat"
+    pytorch_model=$1
+    mcn_model_path=$2
 	converter="ipython $SCRIPTPATH/python/import_pytorch.py --"
 	mkdir -p "${import_dir}"
 
@@ -27,9 +27,8 @@ function convert_model()
 
 function test_model()
 {
-    import_dir=$1
-    pytorch_model=$2
-    mcn_model_path="${import_dir}/${pytorch_model}-pt-mcn.mat"
+    pytorch_model=$1
+    mcn_model_path=$2
 	tester="ipython $SCRIPTPATH/test/py_check.py --"
     $tester \
             --image-size='[224,224]' \
@@ -38,14 +37,14 @@ function test_model()
 }
 
 	
-import_dir="models"
 #declare -a model_list=("alexnet" "vgg11" "vgg13" "vgg16" "vgg19")
 declare -a model_list=("vgg11")
-for model in "${model_list[@]}"
+for pytorch_model in "${model_list[@]}"
 do
-    convert_model $import_dir $model
+    mcn_model_path="${import_dir}/${pytorch_model}-pt-mcn.mat"
+    convert_model $pytorch_model $mcn_model_path
     if [ $test_imported_models = true ]
     then
-        test_model $import_dir $model
+        test_model $pytorch_model $mcn_model_path
     fi
 done
