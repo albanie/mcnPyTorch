@@ -30,7 +30,7 @@ function test_model()
 {
     import_dir=$1
     pytorch_model=$2
-    mcn_model_path="${import_dir}/${pytorch_model}-mcn.mat"
+    mcn_model_path="${import_dir}/${pytorch_model}-pt-mcn.mat"
 	tester="ipython $SCRIPTPATH/test/py_check.py --"
     $tester \
             --image-size='[224,224]' \
