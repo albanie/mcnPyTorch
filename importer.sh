@@ -41,7 +41,8 @@ function test_model()
 	
 import_dir="models"
 #declare -a model_list=("alexnet" "vgg11" "vgg13" "vgg16" "vgg19")
-declare -a model_list=("alexnet")
+declare -a model_list=("alexnet" )
+declare -a im_sizes=("[227,227]" "[227 227")
 for model in "${model_list[@]}"
 do
     convert_model $import_dir $model
