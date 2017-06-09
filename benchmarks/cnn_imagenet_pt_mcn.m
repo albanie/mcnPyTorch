@@ -43,8 +43,8 @@ dag.addLayer('top5err', dagnn.Loss('loss', 'topkerror', 'opts', {'topK',5}), ...
              {'prediction','label'}, 'top5err') ;
 
 if strcmp(opts.model, 'alexnet-pt-mcn')
-  dag.meta.normalisation.cropSize = 227 / 256 ;
-  dag.meta.normalisation.imageSize = [227 227] ;
+  dag.meta.normalisation.cropSize = 224 / 256 ;
+  %dag.meta.normalisation.imageSize = [227 227] ;
 end
 
 
@@ -52,7 +52,7 @@ end
 imdb.images.set(imdb.images.set == 1) = 4 ;
 [dag, info] = cnn_train_dag(dag, imdb, getBatchFn(opts, dag.meta), ...
                             'expDir', opts.expDir, 'gpus', opts.train.gpus, ...
-                             'numEpochs', 1) ;
+                             'numEpochs', 1, 'continue', 0) ;
 
 % -------------------------------------------------------------------------
 function fn = getBatchFn(opts, meta)
