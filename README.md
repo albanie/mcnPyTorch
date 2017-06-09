@@ -7,11 +7,14 @@ A tool for converting [PyTorch](https://github.com/pytorch/pytorch) models into 
 
 Some of the useful models available in the `torchvision.models` module 
 have been converted into matconvnet and are available for download at the links
-below:
+below (further information can be found [here](http://www.robots.ox.ac.uk/~albanie/models.html)):
+
+[alexnet-pt-mcn](http://www.robots.ox.ac.uk/~albanie/models/pytorch-imports/alexnet-pt-mcn.mat)
 
 ### Converting your own models
 
-The conversion script requires Python (with a PyTorch installed) and MATLAB.  Converting models between frameworks tends to be a non-trivial task, so it is likely
+The conversion script requires Python (with a PyTorch installed) and MATLAB.  
+Converting models between frameworks tends to be a non-trivial task, so it is likely
 that modifications will be needed for unusual models.
 
 ### Installation
