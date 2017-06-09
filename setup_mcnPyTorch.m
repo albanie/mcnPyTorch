@@ -3,4 +3,4 @@ function setup_mcnPyTorch()
 
   root = fileparts(mfilename('fullpath')) ;
   addpath(root) ;
-  addpath(root, [root '/matlab'], [root '/num_diff']) ;
+  addpath(root, [root '/matlab'], [root '/num_diff'], [root '/benchmarks']) ;
