@@ -6,10 +6,10 @@ A tool for converting [PyTorch](https://github.com/pytorch/pytorch) models into 
 ### torchvision models
 
 Some of the useful models available in the `torchvision.models` module 
-have been converted into matconvnet and are available for download at the links
-below (further information can be found [here](http://www.robots.ox.ac.uk/~albanie/models.html#pytorch-models)):
+have been converted into matconvnet and are available for download at the link
+below: 
 
-[alexnet-pt-mcn](http://www.robots.ox.ac.uk/~albanie/models/pytorch-imports/alexnet-pt-mcn.mat)
+[pretrained models](http://www.robots.ox.ac.uk/~albanie/models.html#pytorch-models)):
 
 ### Converting your own models
 
