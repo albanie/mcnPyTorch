@@ -9,7 +9,7 @@ Some of the useful models available in the `torchvision.models` module
 have been converted into matconvnet and are available for download at the link
 below: 
 
-[pretrained models](http://www.robots.ox.ac.uk/~albanie/models.html#pytorch-models)):
+[imported torchvision models](http://www.robots.ox.ac.uk/~albanie/models.html#pytorch-models)
 
 ### Converting your own models
 
