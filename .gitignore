@@ -2,3 +2,4 @@
 *.mat
 models/
 models
+sync_models.sh

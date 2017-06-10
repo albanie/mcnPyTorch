@@ -25,6 +25,9 @@ import torchvision.transforms as transforms
 
 if 1:
     sys.path.insert(0, os.path.expanduser('~/local/matlab-engine/lib'))
+    sys.path.insert(0, 'python')
+
+import pytorch_utils as pl
 
 # compare against matconvnet
 import matlab.engine
@@ -49,39 +52,27 @@ parser.add_argument('--image-size',
 parser.add_argument('--remove-dropout', #TODO(sam): clean up, determine automatically
                     dest='remove_dropout',
                     action='store_true',
+                    default=False,
                     help='Remove dropout layers') 
 parser.add_argument('--is-torchvision-model',
                     type=bool,
                     nargs='?',
                     default=True,
                     help='is the model part of the torchvision.models')
-parser.set_defaults(remove_dropout=False)
 args = parser.parse_args()
 
+# params = torch.load(str(vgg))
 if args.is_torchvision_model:
-    if args.py_model == 'alexnet':
-        net = torchvision.models.alexnet(pretrained=True)
-    elif args.py_model == 'vgg11':
-        net = torchvision.models.vgg11(pretrained=True)
-    elif args.py_model == 'vgg13':
-        net = torchvision.models.vgg13(pretrained=True)
-    elif args.py_model == 'vgg16':
-        net = torchvision.models.vgg16(pretrained=True)
-    elif args.py_model == 'vgg19':
-        net = torchvision.models.vgg19(pretrained=True)
-    elif args.py_model == 'resnet50':
-        net = torchvision.models.resnet50(pretrained=True)
-    else:
-        raise ValueError('{} unrecognised torchvision model'.format(args.py_model))
+    net = pl.load_valid_pytorch_model(args.py_model)
 else:
-    raise ValueError
+    raise ValueError('not yet supported')
 
 def get_inter_feats(net, x, feats=[]):
    if len(list(net.children())) == 0:
        return [net(x)]
    trunk = torch.nn.Sequential(*list(net.children())[:-1])
-   sizes = [*get_inter_feats(trunk, x, feats), net(x)]
-   return sizes
+   feats = [*get_inter_feats(trunk, x, feats), net(x)]
+   return feats
 
 # generate image and convert to var
 im_orig = Image.open(str(cwd / 'test/peppers.png')).convert('RGB')
@@ -92,11 +83,12 @@ normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
 transform = transforms.Compose([transforms.ToTensor(),normalize])
 x = Variable(transform(im).unsqueeze(0))
 
-feature_feats = get_inter_feats(net.features.eval(), x)
-last = feature_feats[-1]
-last = last.view(last.size(0), -1)
-classifier_feats = get_inter_feats(net.classifier.eval(), last)
-py_feats_tensors = feature_feats + classifier_feats
+# feature_feats = get_inter_feats(net.features.eval(), x)
+# last = feature_feats[-1]
+# last = last.view(last.size(0), -1)
+# classifier_feats = get_inter_feats(net.classifier.eval(), last)
+# py_feats_tensors = feature_feats + classifier_feats
+py_feats_tensors = pl.compute_intermediate_feats(net, x)
 
 if 0:
     # sanity check

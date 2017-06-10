@@ -3,8 +3,10 @@
 #
 # author: Samuel Albanie
 
-import torch
 import cv2
+import ipdb
+import torch
+import torchvision
 import numpy as np
 from collections import OrderedDict
 
@@ -85,6 +87,77 @@ class ImTransform(object):
         im -= self.mean_im
         im = im.transpose(self.swap)
         return torch.from_numpy(im)
+
+# --------------------------------------------------------------------
+#                                                               Models
+# --------------------------------------------------------------------
+
+def load_valid_pytorch_model(name):
+    if name == 'alexnet':
+        net = torchvision.models.alexnet(pretrained=True)
+    elif name == 'vgg11':
+        net = torchvision.models.vgg11(pretrained=True)
+    elif name == 'vgg13':
+        net = torchvision.models.vgg13(pretrained=True)
+    elif name == 'vgg13_bn':
+        net = torchvision.models.vgg13_bn(pretrained=True)
+    elif name == 'vgg16':
+        net = torchvision.models.vgg16(pretrained=True)
+    elif name == 'vgg19':
+        net = torchvision.models.vgg16(pretrained=True)
+    elif name == 'squeezenet1_0':
+        net = torchvision.models.squeezenet1_0(pretrained=True)
+    elif name == 'resnet50':
+        net = torchvision.models.resnet50(pretrained=True)
+    else:
+        raise ValueError('{} unrecognised torchvision model'.format(name))
+    return net
+
+# --------------------------------------------------------------------
+#                                                   Feature Extraction
+# --------------------------------------------------------------------
+
+def get_custom_feats(net, x):
+    children = list(net.children())
+    if isinstance(net, torchvision.models.squeezenet.Fire):
+        assert len(children) == 6, 'unexpected number of children'
+        squeeze = torch.nn.Sequential(*children[:2])
+        out1x1 = torch.nn.Sequential(*children[:4])
+        out3x3 = torch.nn.Sequential(*(children[:2] + children[4:6]))
+        feats = []
+        for subnet in [squeeze, out1x1, out3x3]:
+            raw = torch.nn.Sequential(*list(subnet.children())[:-1])(x)
+            feats.append(raw) # without relu
+            feats.append(subnet(x))
+        feats.append(net(x))
+    else:
+        raise ValueError('{} unrecognised custom module'.format(type(net)))
+    return feats
+
+def get_feats(net, x, feats=[]):
+   children = list(net.children())
+   if len(children) == 0:
+       return [net(x)]
+   head, tail = children[:-1], children[-1]
+   trunk = torch.nn.Sequential(*head)
+   trunk_feats = get_feats(trunk, x, feats)
+   if type(tail) in [torchvision.models.squeezenet.Fire]:
+       tail_feats = get_custom_feats(tail, trunk_feats[-1])
+   else:
+       tail_feats = [net(x)]
+   sizes = trunk_feats + tail_feats
+   return sizes
+
+def compute_intermediate_feats(net, x):
+    feature_feats = get_feats(net.features, x, feats=[])
+    x = feature_feats[-1]
+    if isinstance(net, torchvision.models.squeezenet.SqueezeNet):
+        cls_feats = get_feats(net.classifier, x, feats=[])
+        x = x.view(x.size(0), -1)
+    else:
+        x = x.view(x.size(0), -1)
+        cls_feats = get_feats(net.classifier, x, feats=[])
+    return feature_feats + cls_feats
 
 # --------------------------------------------------------------------
 #                                              PyTorch Aggregator class
@@ -215,7 +288,7 @@ class PTConv(PTLayer):
                  stride,
                  dilation,
                  group, 
-		 filter_depth=None):
+         filter_depth=None):
 
         super().__init__(name, inputs, outputs)
 

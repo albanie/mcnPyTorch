@@ -6,7 +6,7 @@ import numpy as np
 import scipy.io
 import torchvision
 from collections import OrderedDict
-import pytorch_layers as pl
+import pytorch_utils as pl
 from torch.autograd import Variable
 from ast import literal_eval as make_tuple
 import ipdb
@@ -31,6 +31,8 @@ if debug:
     sys.path.insert(0, path) # lazy
     from zsvision.zs_iterm import zs_dispFig
 
+sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/python/import_pytorch.py', '--image-size=[224,224]', '--full-image-size=[256,256]', '--is-torchvision-model=True', 'squeezenet1_0', 'models/squeezenet1_0-pt-mcn.mat']
+
 parser = argparse.ArgumentParser(
            description='Convert model from PyTorch to MatConvNet.')
 parser.add_argument('input',
@@ -46,6 +48,11 @@ parser.add_argument('--image-size',
                     nargs='?',
                     default='[224,224]',
                     help='Size of the input image')
+parser.add_argument('--full-image-size',
+                    type=str,
+                    nargs='?',
+                    default='[256,256]',
+                    help='Size of the full image (from which crops are taken)')
 parser.add_argument('--is-torchvision-model',
                     type=bool,
                     nargs='?',
@@ -77,8 +84,10 @@ parser.set_defaults(remove_dropout=False)
 parser.set_defaults(remove_loss=False)
 args = parser.parse_args()
 
-# forward pass to compute pytorch feature sizes
 args.image_size = tuple(make_tuple(args.image_size))
+args.full_image_size = tuple(make_tuple(args.full_image_size))
+
+# forward pass to compute pytorch feature sizes
 im = scipy.misc.face()
 im = scipy.misc.imresize(im, args.image_size)
 
@@ -90,50 +99,67 @@ if debug:
 # vgg = model_dir / 'vgg16-397923af.pth'
 
 # params = torch.load(str(vgg))
-
 if args.is_torchvision_model:
-    if args.input == 'alexnet':
-        net = torchvision.models.alexnet(pretrained=True)
-    elif args.input == 'vgg11':
-        net = torchvision.models.vgg11(pretrained=True)
-    elif args.input == 'vgg13':
-        net = torchvision.models.vgg13(pretrained=True)
-    elif args.input == 'vgg16':
-        net = torchvision.models.vgg16(pretrained=True)
-    elif args.input == 'vgg19':
-        net = torchvision.models.vgg19(pretrained=True)
-    elif args.input == 'resnet50':
-        net = torchvision.models.resnet50(pretrained=True)
-    else:
-        raise ValueError('{} unrecognised torchvision model'.format(args.input))
+    net = pl.load_valid_pytorch_model(args.input)
 else:
-    raise ValueError
+    raise ValueError('not yet supported')
 
 transform = pl.ImTransform(args.image_size, (104, 117, 123), (2, 0, 1))
 x = Variable(transform(im).unsqueeze(0))
 y = net(x)
 
-supported_models = [torchvision.models.resnet.ResNet] # TODO clean up
 params = net.state_dict()
 
 # this is probably silly, but I don't know enough about how pyTorch
 # works to do it sensibly
-def get_feat_sizes(net, x, sizes=[]):
-   if len(list(net.children())) == 0:
-       return [pl.tolist(net(x).size())]
-   trunk = torch.nn.Sequential(*list(net.children())[:-1])
-   sizes = [*get_feat_sizes(trunk, x, sizes), pl.tolist(net(x).size())]
-   return sizes
-   
-feat_sizes = get_feat_sizes(net.features, x, sizes=[])
-rand_feats = np.random.random(feat_sizes[-1])
-x = Variable(torch.from_numpy(rand_feats)).float()
-x = x.view(x.size(0), -1)
-cls_sizes = get_feat_sizes(net.classifier, x, sizes=[])
-#flatten_sizes = [1, np.prod(feat_sizes[-1])] # flatten from last features 
-sizes = feat_sizes + cls_sizes
+# def get_custom_sizes(net, in_sz):
+    # children = list(net.children())
+    # x = Variable(torch.from_numpy(np.random.random(in_sz))).float()
+    # if isinstance(net, torchvision.models.squeezenet.Fire):
+        # assert len(children) == 6, 'unexpected number of children'
+        # squeeze = torch.nn.Sequential(*children[:2])
+        # out1x1 = torch.nn.Sequential(*children[:4])
+        # out3x3 = torch.nn.Sequential(*(children[:2] + children[4:6]))
+        # sizes = 2 * [pl.tolist(squeeze(x).size())] + \
+                # 2 * [pl.tolist(out1x1(x).size())] + \
+                # 2 * [pl.tolist(out3x3(x).size())] + [pl.tolist(net(x).size())]
+    # else:
+        # raise ValueError('{} unrecognised custom module'.format(type(net)))
+    # return sizes
 
-sz_ = feat_sizes + cls_sizes
+# def get_feat_sizes(net, x, sizes=[]):
+   # children = list(net.children())
+   # if len(children) == 0:
+       # return [pl.tolist(net(x).size())]
+   # head, tail = children[:-1], children[-1]
+   # trunk = torch.nn.Sequential(*head)
+   # trunk_sizes = get_feat_sizes(trunk, x, sizes)
+   # if type(tail) in [torchvision.models.squeezenet.Fire]:
+       # tail_sizes = get_custom_sizes(tail, trunk_sizes[-1])
+   # else:
+       # tail_sizes = [pl.tolist(net(x).size())]
+   # sizes = trunk_sizes + tail_sizes
+   # return sizes
+
+# def compute_net_feat_sizes(net, x):
+    # feat_sizes = get_feat_sizes(net.features, x, sizes=[])
+    # rand_feats = np.random.random(feat_sizes[-1])
+    # x = Variable(torch.from_numpy(rand_feats)).float()
+    # if isinstance(net, torchvision.models.squeezenet.SqueezeNet):
+        # cls_sizes = get_feat_sizes(net.classifier, x, sizes=[])
+        # x = x.view(x.size(0), -1)
+    # else:
+        # x = x.view(x.size(0), -1)
+        # cls_sizes = get_feat_sizes(net.classifier, x, sizes=[])
+    # return feat_sizes + cls_sizes
+
+#sizes = compute_net_feat_sizes(net, x)
+feats = pl.compute_intermediate_feats(net, x)
+sizes = [pl.tolist(feat.size()) for feat in feats] 
+
+# if isinstance(net, torchvision.models.squeezenet.SqueezeNet):
+    # sizes = [[1, 3, 224, 224]]
+
 if debug:
     for sz in sizes:
         print(sz)
@@ -172,6 +198,24 @@ def process_custom_module(name, module, state):
         assert relu_idx > 0, 'relu not found'
         relu = construct_layers([children[relu_idx],], state)
         layers.extend(relu) # note that relu is a "one-layer" list
+    if isinstance(module, torchvision.models.squeezenet.Fire):
+        state['prefix'] = name # process squeeze block first
+        children = list(module.named_children())
+        assert len(children) == 6 , 'unexpected fire size'
+        squeeze_block,_ = construct_layers(children[:2], state)
+        layers.extend(squeeze_block)
+        expand1x1,_ = construct_layers(children[2:4], state) # expand 1x1
+        layers.extend(expand1x1)
+        out1 = expand1x1[-1].outputs
+        state['in_vars'] = squeeze_block[-1].outputs
+        expand3x3,_ = construct_layers(children[4:], state) # expand 3x3
+        layers.extend(expand3x3)
+        out3 = expand3x3[-1].outputs
+        cat_name = '{}_cat'.format(name)
+        cat_layer = pl.PTConcat(cat_name, [*out1, *out3], [cat_name], 3)
+        state = update_size_info(name, 'mcn-cat', state)
+        layers.append(cat_layer)
+        state['in_vars'] = cat_layer.outputs
     else:
         raise ValueError('unrecognised module {}'.format(type(module)))
     return layers
@@ -274,7 +318,6 @@ def construct_layers(graph, state):
             layers.append(pl.PTPooling(*pargs, **opts))
 
         elif isinstance(module, torch.nn.modules.linear.Linear):
-            print('prefix: {}'.format(state['prefix']))
             state = update_size_info(name, 'Linear', state)
             opts['bias_term'] = bool(module.bias)
             opts['filter_depth'] = module.in_features
@@ -286,8 +329,11 @@ def construct_layers(graph, state):
             opts['group'] = 1
             layers.append(pl.PTConv(*pargs, **opts))
             
-        elif isinstance(module, torchvision.models.resnet.Bottleneck):
+        elif type(module) in [torchvision.models.resnet.Bottleneck, 
+                                torchvision.models.squeezenet.Fire]:
+            prefix_ = state['prefix'] ; state['prefix'] = name
             layers_ = process_custom_module(name, module, state) # soz Guido
+            state['prefix'] = prefix_ # restore prefix
             layers.extend(layers_)
 
         elif isinstance(module, torch.nn.modules.container.Sequential):
@@ -299,7 +345,7 @@ def construct_layers(graph, state):
             state['prefix'] = prefix_ # restore prefix
             layers.extend(layers_)
 
-        elif type(module) in supported_models:
+        elif type(module) in [torchvision.models.resnet.ResNet,]:
             pass
         else:
             raise ValueError('unrecognised module {}'.format(type(module)))
@@ -334,10 +380,9 @@ average_image = np.array((0.485, 0.456, 0.406),dtype='float')
 image_std = np.array((0.229, 0.224, 0.225), dtype='float') 
 
 minputs = np.empty(shape=[0,], dtype=pl.minputdt)
-dataShape = [224,224,3] # hardcode as a temp fix
-fullImageSize = [256, 256]
+dataShape = args.image_size
 print('Input image data tensor shape:', dataShape)
-print('Full input image size:', fullImageSize)
+print('Full input image size:', args.full_image_size)
 
 mnormalization = {
   'imageSize': pl.row(dataShape),
@@ -347,6 +392,13 @@ mnormalization = {
   'keepAspect': True,
   'border': pl.row([0,0]),
   'cropSize': 1.0}
+
+fw = max(args.full_image_size[0], dataShape[1])
+fh = max(args.full_image_size[0], dataShape[0])
+mnormalization['border'] = max([float(fw - dataShape[1]),
+                              float(fh - dataShape[0])])
+mnormalization['cropSize'] = min([float(dataShape[1]) / fw,
+                                float(dataShape[0]) / fh])
 
 # --------------------------------------------------------------------
 #                                                    Convert to MATLAB

@@ -16,10 +16,10 @@ function convert_model()
     if [ $refresh_models = false ] && [ -e $mcn_model_path ]
 	then
 		echo "$mcn_model_path already exists; skipping."
-	else
-		echo "Exporting PyTorch model to matconvnet (may take some time) ..."
-        $converter \
+	else echo "Exporting PyTorch model to matconvnet (may take some time) ..." 
+    $converter \
             --image-size='[224,224]' \
+            --full-image-size='[256,256]' \
             --is-torchvision-model=True \
             $pytorch_model $mcn_model_path
     fi
@@ -38,7 +38,7 @@ function test_model()
 
 	
 #declare -a model_list=("alexnet" "vgg11" "vgg13" "vgg16" "vgg19")
-declare -a model_list=("vgg11")
+declare -a model_list=("squeezenet1_0")
 for pytorch_model in "${model_list[@]}"
 do
     mcn_model_path="${import_dir}/${pytorch_model}-pt-mcn.mat"
