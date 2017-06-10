@@ -4,6 +4,7 @@
 # author: Samuel Albanie
 
 import cv2
+import math
 import ipdb
 import torch
 import torchvision
@@ -93,6 +94,7 @@ class ImTransform(object):
 # --------------------------------------------------------------------
 
 def load_valid_pytorch_model(name):
+    flatten_loc = 'classifier' # by default, flattening occurs before classifier
     if name == 'alexnet':
         net = torchvision.models.alexnet(pretrained=True)
     elif name == 'vgg11':
@@ -107,11 +109,15 @@ def load_valid_pytorch_model(name):
         net = torchvision.models.vgg16(pretrained=True)
     elif name == 'squeezenet1_0':
         net = torchvision.models.squeezenet1_0(pretrained=True)
+        flatten_loc = 'end' # delay flattening
+    elif name == 'squeezenet1_1':
+        net = torchvision.models.squeezenet1_1(pretrained=True)
+        flatten_loc = 'end' # delay flattening
     elif name == 'resnet50':
         net = torchvision.models.resnet50(pretrained=True)
     else:
         raise ValueError('{} unrecognised torchvision model'.format(name))
-    return net
+    return net, flatten_loc
 
 # --------------------------------------------------------------------
 #                                                   Feature Extraction
@@ -148,16 +154,18 @@ def get_feats(net, x, feats=[]):
    sizes = trunk_feats + tail_feats
    return sizes
 
-def compute_intermediate_feats(net, x):
+def compute_intermediate_feats(net, x, flatten_loc):
     feature_feats = get_feats(net.features, x, feats=[])
     x = feature_feats[-1]
-    if isinstance(net, torchvision.models.squeezenet.SqueezeNet):
+    if flatten_loc == 'classifier':
+        x = x.view(x.size(0), -1)
+        cls_feats = get_feats(net.classifier, x, feats=[])
+    elif flatten_loc == 'end':
         cls_feats = get_feats(net.classifier, x, feats=[])
         x = x.view(x.size(0), -1)
     else:
-        x = x.view(x.size(0), -1)
-        cls_feats = get_feats(net.classifier, x, feats=[])
-    return feature_feats + cls_feats
+        raise ValueError('flatten_loc: {} not recognised'.format(flatten_loc))
+    return feature_feats + cls_feats[1:] # drop duplicate feature
 
 # --------------------------------------------------------------------
 #                                              PyTorch Aggregator class
@@ -436,11 +444,8 @@ class PTBatchNorm(PTLayer):
 
 
 class PTPooling(PTLayer):
-    def __init__(self, name, inputs, outputs,
-                 method,
-                 pad,
-                 kernel_size,
-                 stride):
+    def __init__(self, name, inputs, outputs, method, pad, kernel_size, 
+                 stride, ceil_mode, sizes, dilation=[1,1]):
 
         super().__init__(name, inputs, outputs)
 
@@ -452,6 +457,17 @@ class PTPooling(PTLayer):
         if len(stride) == 1 : stride = stride * 2
         if len(pad) == 1 : pad = pad * 4
         elif len(pad) == 2 : pad = [pad[0], pad[0], pad[1], pad[1]]
+
+        if ceil_mode:
+            # if ceil mode is engaged, we need to handle padding more 
+            # carefully pad to compensate for discrepancy 
+            in_sz, out_sz = sizes
+            h_out = ((in_sz[2] + 2*pad[0] - dilation[0]*(kernel_size[0] - 1) -1) 
+                                                            / stride[0] + 1)
+            w_out = ((in_sz[3] + 2*pad[1] - dilation[1]*(kernel_size[1] - 1) -1)
+                                                             / stride[1] + 1)
+            if math.ceil(h_out) > math.floor(h_out): pad[1] += 1
+            if math.ceil(w_out) > math.floor(w_out): pad[3] += 1
 
         self.method = method
         self.pad = tolist(pad)

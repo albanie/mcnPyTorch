@@ -1,5 +1,5 @@
 import_dir="models"
-refresh_models=false
+refresh_models=true
 test_imported_models=true # (requires matlab.engine)
 
 pushd `dirname $0` > /dev/null
@@ -37,8 +37,9 @@ function test_model()
 }
 
 	
-#declare -a model_list=("alexnet" "vgg11" "vgg13" "vgg16" "vgg19")
-declare -a model_list=("squeezenet1_0")
+declare -a model_list=("alexnet" "vgg11" "vgg13" "vgg16" "vgg19" \ 
+                       "squeezenet1_0" "squeezenet1_1")
+#declare -a model_list=("squeezenet1_1")
 for pytorch_model in "${model_list[@]}"
 do
     mcn_model_path="${import_dir}/${pytorch_model}-pt-mcn.mat"

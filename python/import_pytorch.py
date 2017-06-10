@@ -12,6 +12,7 @@ from ast import literal_eval as make_tuple
 import ipdb
 
 debug = 0
+verbose = 1
 
 if debug:
     from IPython import get_ipython
@@ -31,7 +32,8 @@ if debug:
     sys.path.insert(0, path) # lazy
     from zsvision.zs_iterm import zs_dispFig
 
-sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/python/import_pytorch.py', '--image-size=[224,224]', '--full-image-size=[256,256]', '--is-torchvision-model=True', 'squeezenet1_0', 'models/squeezenet1_0-pt-mcn.mat']
+if debug:
+    sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/python/import_pytorch.py', '--image-size=[224,224]', '--full-image-size=[256,256]', '--is-torchvision-model=True', 'squeezenet1_0', 'models/squeezenet1_0-pt-mcn.mat']
 
 parser = argparse.ArgumentParser(
            description='Convert model from PyTorch to MatConvNet.')
@@ -100,7 +102,7 @@ if debug:
 
 # params = torch.load(str(vgg))
 if args.is_torchvision_model:
-    net = pl.load_valid_pytorch_model(args.input)
+    net,flatten_loc = pl.load_valid_pytorch_model(args.input)
 else:
     raise ValueError('not yet supported')
 
@@ -109,58 +111,10 @@ x = Variable(transform(im).unsqueeze(0))
 y = net(x)
 
 params = net.state_dict()
-
-# this is probably silly, but I don't know enough about how pyTorch
-# works to do it sensibly
-# def get_custom_sizes(net, in_sz):
-    # children = list(net.children())
-    # x = Variable(torch.from_numpy(np.random.random(in_sz))).float()
-    # if isinstance(net, torchvision.models.squeezenet.Fire):
-        # assert len(children) == 6, 'unexpected number of children'
-        # squeeze = torch.nn.Sequential(*children[:2])
-        # out1x1 = torch.nn.Sequential(*children[:4])
-        # out3x3 = torch.nn.Sequential(*(children[:2] + children[4:6]))
-        # sizes = 2 * [pl.tolist(squeeze(x).size())] + \
-                # 2 * [pl.tolist(out1x1(x).size())] + \
-                # 2 * [pl.tolist(out3x3(x).size())] + [pl.tolist(net(x).size())]
-    # else:
-        # raise ValueError('{} unrecognised custom module'.format(type(net)))
-    # return sizes
-
-# def get_feat_sizes(net, x, sizes=[]):
-   # children = list(net.children())
-   # if len(children) == 0:
-       # return [pl.tolist(net(x).size())]
-   # head, tail = children[:-1], children[-1]
-   # trunk = torch.nn.Sequential(*head)
-   # trunk_sizes = get_feat_sizes(trunk, x, sizes)
-   # if type(tail) in [torchvision.models.squeezenet.Fire]:
-       # tail_sizes = get_custom_sizes(tail, trunk_sizes[-1])
-   # else:
-       # tail_sizes = [pl.tolist(net(x).size())]
-   # sizes = trunk_sizes + tail_sizes
-   # return sizes
-
-# def compute_net_feat_sizes(net, x):
-    # feat_sizes = get_feat_sizes(net.features, x, sizes=[])
-    # rand_feats = np.random.random(feat_sizes[-1])
-    # x = Variable(torch.from_numpy(rand_feats)).float()
-    # if isinstance(net, torchvision.models.squeezenet.SqueezeNet):
-        # cls_sizes = get_feat_sizes(net.classifier, x, sizes=[])
-        # x = x.view(x.size(0), -1)
-    # else:
-        # x = x.view(x.size(0), -1)
-        # cls_sizes = get_feat_sizes(net.classifier, x, sizes=[])
-    # return feat_sizes + cls_sizes
-
-#sizes = compute_net_feat_sizes(net, x)
-feats = pl.compute_intermediate_feats(net, x)
+feats = pl.compute_intermediate_feats(net, x, flatten_loc)
 sizes = [pl.tolist(feat.size()) for feat in feats] 
 
-# if isinstance(net, torchvision.models.squeezenet.SqueezeNet):
-    # sizes = [[1, 3, 224, 224]]
-
-if debug:
+if verbose:
     for sz in sizes:
         print(sz)
 
@@ -215,7 +169,7 @@ def process_custom_module(name, module, state):
         cat_layer = pl.PTConcat(cat_name, [*out1, *out3], [cat_name], 3)
         state = update_size_info(name, 'mcn-cat', state)
         layers.append(cat_layer)
-        state['in_vars'] = cat_layer.outputs
+        state['out_vars'] = cat_layer.outputs
     else:
         raise ValueError('unrecognised module {}'.format(type(module)))
     return layers
@@ -236,6 +190,28 @@ def update_size_info(name, module, state, pop_first=1):
         state['sizes'].pop(0)
     return state
 
+def flatten_layers(name, layers, state) :
+    """
+    Flattening is done in the network class, rather 
+    than in the moudles with pytorch, so we need to 'catch' this event 
+    and reproduce it in the mcn sense.  The reshape is essentially free, 
+    but the permute can add some overhead
+    """
+    if state['prefix']: name = '{}_{}'.format(state['prefix'], name)
+    name_perm = '{}_permute'.format(name)
+    state['out_vars'] = [name_perm]
+    pargs = [name_perm, state['in_vars'], state['out_vars']]
+    layers.append(pl.PTPermute(*pargs, order=[2,1,3,4]))
+    state['in_vars'] = state['out_vars']
+
+    name_flat = '{}_flatten'.format(name)
+    state['out_vars'] = [name_flat]
+    pargs = [name_flat, state['in_vars'], state['out_vars']]
+    layers.append(pl.PTFlatten(*pargs, axis=3))
+    state['in_vars'] = state['out_vars']
+    #state = update_size_info(name, 'mcn-flatten', state)
+    return layers, state
+
 def construct_layers(graph, state):
     """
     `state`: a dictionary which is carried through the graph construction
@@ -246,24 +222,10 @@ def construct_layers(graph, state):
 
         name = name.replace('.', '_') # make comatible with MATLAB
 
-        if name == 'classifier': 
-            # special case - flattening is done in the network class, rather 
-            # than in the moudles with pytorch, so we need to 'catch' this event 
-            # and reproduce it in the mcn sense.  The reshape is essentially free, 
-            # but the permute can add some overhead
-            if state['prefix']: name = '{}_{}'.format(state['prefix'], name)
-            name_perm = '{}_permute'.format(name)
-            state['out_vars'] = [name_perm]
-            pargs = [name_perm, state['in_vars'], state['out_vars']]
-            layers.append(pl.PTPermute(*pargs, order=[2,1,3,4]))
-            state['in_vars'] = state['out_vars']
-
-            name_flat = '{}_flatten'.format(name)
-            state['out_vars'] = [name_flat]
-            pargs = [name_flat, state['in_vars'], state['out_vars']]
-            layers.append(pl.PTFlatten(*pargs, axis=3))
-            state['in_vars'] = state['out_vars']
-            state = update_size_info(name, 'mcn-flatten', state)
+        if name == 'classifier' and flatten_loc == 'classifier': 
+            layers_, state = flatten_layers(name, layers, state)
+            ipdb.set_trace()
+            layers.append(layers_)
 
         opts = {} 
         if state['prefix']: name = '{}_{}'.format(state['prefix'], name)
@@ -301,20 +263,25 @@ def construct_layers(graph, state):
             state = update_size_info(name, 'Dropout', state)
 
         elif isinstance(module, torch.nn.modules.pooling.MaxPool2d):
+            in_out_sz = state['sizes'][:2]
             state = update_size_info(name, 'MaxPool', state)
             opts['method'] = 'max'
             opts['pad'] = module.padding
             opts['stride'] = module.stride
             opts['kernel_size'] = module.kernel_size
+            opts['ceil_mode'] = module.ceil_mode
+            opts['sizes'] = in_out_sz
             layers.append(pl.PTPooling(*pargs, **opts))
 
         elif isinstance(module, torch.nn.modules.pooling.AvgPool2d):
+            in_out_sz = state['sizes'][:2]
             state = update_size_info(name, 'AvgPool', state)
-            sizes.pop(0)
             opts['method'] = 'avg'
             opts['pad'] = module.padding
             opts['stride'] = module.stride
             opts['kernel_size'] = module.kernel_size
+            opts['ceil_mode'] = module.ceil_mode
+            opts['sizes'] = in_out_sz
             layers.append(pl.PTPooling(*pargs, **opts))
 
         elif isinstance(module, torch.nn.modules.linear.Linear):
@@ -355,7 +322,11 @@ def construct_layers(graph, state):
 mods = list(net.modules())
 graph = mods[0].named_children()
 state = {'in_vars': ['data'], 'sizes': sizes, 'prefix': ''}
-layers,_ = construct_layers(graph, state)
+layers,state = construct_layers(graph, state)
+
+if flatten_loc == 'end':
+    name = 'final'
+    layers, state = flatten_layers(name, layers, state)
 
 # load layers into model and set params
 ptmodel = pl.PTModel()

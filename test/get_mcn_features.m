@@ -2,20 +2,7 @@ function feats = get_mcn_features(modelPath, im, imsz)
 %GET_MCN_FEATURES - compute all activations for a model
 
 fprintf('running in matlab\n') ;
-
-% hack
-path = getenv('LD_LIBRARY_PATH') ;
-path = [ '/users/albanie/local/compat/cuda-7.5/lib:/users/albanie/local/compat/cuda-7.5/lib:' path ] ;
-setenv('LD_LIBRARY_PATH', path) ;
-
-% setup
-addpath('~/coding/libs/matconvnets/contrib-matconvnet/matlab') ;
-vl_setupnn ;
-addpath(fullfile(vl_rootnn, 'contrib/mcnPyTorch/matlab')) ;
-debug = 0 ;
-
-% load model
-dag = dagnn.DagNN.loadobj(load(modelPath)) ;
+debug = 1 ;
 
 % reshape image
 im = single(cell2mat(im)) ; % input im is in pyTorch format (CxHxW)
@@ -34,6 +21,19 @@ if debug
   fprintf('image size: %d\n', size(im)) ;
   fprintf('image data type: %\ns', class(im)) ;
 end
+
+% hackz
+path = getenv('LD_LIBRARY_PATH') ;
+path = [ '/users/albanie/local/compat/cuda-7.5/lib:/users/albanie/local/compat/cuda-7.5/lib:' path ] ;
+setenv('LD_LIBRARY_PATH', path) ;
+
+% setup
+addpath('~/coding/libs/matconvnets/contrib-matconvnet/matlab') ;
+vl_setupnn ;
+addpath(fullfile(vl_rootnn, 'contrib/mcnPyTorch/matlab')) ;
+
+% load model
+dag = dagnn.DagNN.loadobj(load(modelPath)) ;
 
 dag.conserveMemory = 0 ;
 dag.mode = 'test' ;

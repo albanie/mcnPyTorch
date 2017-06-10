@@ -34,6 +34,10 @@ import matlab.engine
 eng = matlab.engine.start_matlab()
 cwd = pathlib.Path.cwd()
 
+if 1:
+    sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/test/py_check.py', '--image-size=[224,224]', '--is-torchvision-model=True', 'squeezenet1_1', 'models/squeezenet1_1-pt-mcn.mat']
+
+
 parser = argparse.ArgumentParser(
    description='Check activations of MatConvNet model imported from PyTorch.')
 parser.add_argument('py_model',
@@ -63,7 +67,7 @@ args = parser.parse_args()
 
 # params = torch.load(str(vgg))
 if args.is_torchvision_model:
-    net = pl.load_valid_pytorch_model(args.py_model)
+    net, flatten_loc = pl.load_valid_pytorch_model(args.py_model)
 else:
     raise ValueError('not yet supported')
 
@@ -88,37 +92,14 @@ x = Variable(transform(im).unsqueeze(0))
 # last = last.view(last.size(0), -1)
 # classifier_feats = get_inter_feats(net.classifier.eval(), last)
 # py_feats_tensors = feature_feats + classifier_feats
-py_feats_tensors = pl.compute_intermediate_feats(net, x)
-
-if 0:
-    # sanity check
-    # 1. Define the appropriate image pre-processing function.
-    preprocessFn = transforms.Compose([transforms.Scale(256), 
-                                       transforms.CenterCrop(227), 
-                                       transforms.ToTensor(), 
-                                       transforms.Normalize(mean = [0.485, 0.456, 0.406], 
-                                       std=[0.229, 0.224, 0.225])])
-    inputVar =  Variable(preprocessFn(im_orig).unsqueeze(0))
-    out = net.eval()(inputVar)
-    # 2. Load the imagenet class names.
-    import json
-    imagenetClasses = {int(idx): entry[1] for (idx, entry) in 
-                        json.load(open('imagenet_class_index.json')).items()}
-    #preds = py_feats_tensors[-1]
-    probs, indices = (-torch.nn.Softmax()(out).data).sort()
-    probs = (-probs).numpy()[0][:10]; indices = indices.numpy()[0][:10]
-    preds = [imagenetClasses[idx] + ': ' + str(prob) for (prob, idx) in zip(probs, indices)]
-    m = torch.nn.Softmax()
-    probs = m(preds)
-    best = probs.max().data.numpy()[0]
-    print('top prediction {0:.2f}'.format(best))
+py_feats_tensors = pl.compute_intermediate_feats(net, x, flatten_loc)
 
 # create image to pass to MATLAB and compute the feature maps
 im_np = np.array(torch.squeeze(x.data,0).numpy())
 mcn_im = im_np.flatten().tolist() # no numpy support
 eng.addpath(str(cwd/'test'),nargout=0)
 mcn_feats_ = [np.array(x) for x in 
-                   eng.get_mcn_features(args.mcn_model, mcn_im, im_np.shape)]
+              eng.get_mcn_features(args.mcn_model, mcn_im, im_np.shape)]
 py_feats = [np.squeeze(x.data.numpy()) for x in py_feats_tensors]
 mcn_feats = [np.squeeze(np.transpose(x, (2,0,1))) for x in mcn_feats_] # to CxHxW
 print('num mcn feature maps: {}'.format(len(mcn_feats)))
@@ -147,8 +128,8 @@ def get_feature_pairs(net):
     pairs = [] 
     cursor = 0
     for py_idx in py_feat_idx:
-        if py_idx == len(feat_modules) + 1:
-            cursor += 1 # mcn flattening procedure uses an extra layer
+        # if py_idx == len(feat_modules) + 1:
+            # cursor += 1 # mcn flattening procedure uses an extra layer
         if py_idx in dropout_idx and args.remove_dropout:
             print('drop zone')
             continue
@@ -165,7 +146,7 @@ for py_idx, mcn_idx in pairs:
     print('{}v{}: size py: {} vs size mcn: {}'.format(py_idx,mcn_idx,
                       py_feat.shape, mcn_feat.shape))
     diff = np.absolute(py_feat - mcn_feat).mean()
-    if diff > 1e-5:
+    if diff > 1e-4:
         print('diff: {}'.format(diff))
         print('py mean: {}'.format(py_feat.mean()))
         print('mcn mean: {}'.format(mcn_feat.mean()))
