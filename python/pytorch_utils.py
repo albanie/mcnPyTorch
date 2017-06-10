@@ -93,6 +93,34 @@ class ImTransform(object):
 #                                                               Models
 # --------------------------------------------------------------------
 
+
+def canonical_net(net, name):
+    """
+    restructure models to be consistent for easier processing
+    """
+    if name == 'resnet18':
+        feats_srcs = ['conv1', 'bn1', 'relu', 'maxpool', 'layer1',
+                     'layer2', 'layer3', 'layer4', 'avgpool']
+        feat_layers = [getattr(net, attr) for attr in feats_srcs]
+        net.features = torch.nn.modules.Sequential(*feat_layers)
+        net.classifier = torch.nn.modules.Sequential(net.fc)
+        for attr in feats_srcs: delattr(net, attr) # prune
+        delattr(net, 'fc')
+
+        def forward(x):
+            # TODO(sam): explain the logic
+            x = net.features(x)
+            x = x.view(x.size(0), -1)
+            x = net.classifier(x)
+            return x
+
+        net.forward = forward
+    else:
+        raise ValueError('{} unrecognised torchvision model'.format(name))
+    return net
+
+
+
 def load_valid_pytorch_model(name):
     flatten_loc = 'classifier' # by default, flattening occurs before classifier
     if name == 'alexnet':
@@ -113,6 +141,9 @@ def load_valid_pytorch_model(name):
     elif name == 'squeezenet1_1':
         net = torchvision.models.squeezenet1_1(pretrained=True)
         flatten_loc = 'end' # delay flattening
+    elif name == 'resnet18':
+        net = torchvision.models.resnet18(pretrained=True)
+        net = canonical_net(net, name)
     elif name == 'resnet50':
         net = torchvision.models.resnet50(pretrained=True)
     else:
@@ -136,6 +167,21 @@ def get_custom_feats(net, x):
             feats.append(raw) # without relu
             feats.append(subnet(x))
         feats.append(net(x))
+    elif isinstance(net, torchvision.models.resnet.BasicBlock):
+        assert len(children) == 5 + bool(net.downsample), 'unexpected number of children'
+        feats = []
+        residual = x
+        out = net.conv1(x) ; feats.append(out)
+        out = net.bn1(out) ; feats.append(out)
+        out = net.relu(out) ; feats.append(out)
+        out = net.conv2(out) ; feats.append(out)
+        out = net.bn2(out) ; feats.append(out)
+        if net.downsample: 
+            projection = list(net.downsample.children())[0]
+            out = projection(residual) ; feats.append(out)
+            residual = net.downsample(residual) ; feats.append(residual)
+        out += residual ; feats.append(out)
+        out = net.relu(out) ; feats.append(out)
     else:
         raise ValueError('{} unrecognised custom module'.format(type(net)))
     return feats
@@ -145,9 +191,15 @@ def get_feats(net, x, feats=[]):
    if len(children) == 0:
        return [net(x)]
    head, tail = children[:-1], children[-1]
+   while isinstance(tail, torch.nn.Sequential):
+       children = list(tail.children())
+       head_, tail = children[:-1], children[-1]
+       head = head + head_ 
    trunk = torch.nn.Sequential(*head)
    trunk_feats = get_feats(trunk, x, feats)
-   if type(tail) in [torchvision.models.squeezenet.Fire]:
+   print(type(tail))
+   if type(tail) in [torchvision.models.squeezenet.Fire, 
+                     torchvision.models.resnet.BasicBlock]:
        tail_feats = get_custom_feats(tail, trunk_feats[-1])
    else:
        tail_feats = [net(x)]
@@ -165,7 +217,8 @@ def compute_intermediate_feats(net, x, flatten_loc):
         x = x.view(x.size(0), -1)
     else:
         raise ValueError('flatten_loc: {} not recognised'.format(flatten_loc))
-    return feature_feats + cls_feats[1:] # drop duplicate feature
+    offset = len(list(net.classifier.children())) > 0
+    return feature_feats + cls_feats[offset:] # drop duplicate feature if needed
 
 # --------------------------------------------------------------------
 #                                              PyTorch Aggregator class

@@ -152,7 +152,37 @@ def process_custom_module(name, module, state):
         assert relu_idx > 0, 'relu not found'
         relu = construct_layers([children[relu_idx],], state)
         layers.extend(relu) # note that relu is a "one-layer" list
-    if isinstance(module, torchvision.models.squeezenet.Fire):
+
+    elif isinstance(module, torchvision.models.resnet.BasicBlock):
+        id_var = state['in_vars']
+        downsample = hasattr(module, 'downsample') and bool(module.downsample)
+        children = list(module.named_children())
+        assert len(children) == 5 + downsample, 'unexpected bottleneck size'
+        state['prefix'] = name
+
+        block, state = construct_layers(children[:5], state)
+        layers.extend(block)
+        state['in_vars'] = block[-1].outputs
+
+        if downsample:
+            state_ = copy.deepcopy(state) ; state_['in_vars'] = id_var
+            down_block,_ = construct_layers([children[-1]], state_)
+            layers.extend(down_block)
+            id_var = down_block[-1].outputs
+
+        cat_name = '{}_cat'.format(name)
+        cat_layer = pl.PTConcat(cat_name, [*id_var, *state['in_vars']], [cat_name], 3)
+        state = update_size_info(name, 'mcn-cat', state)
+        layers.append(cat_layer)
+        state['in_vars'] = cat_layer.outputs
+
+        # add additional ReLU to match model
+        name = '{}_id_relu'.format(name)
+        state['out_vars'] = [name]
+        layers.append(pl.PTReLU(name, state['in_vars'], state['out_vars'])) 
+        state = update_size_info(name, 'ReLU', state)
+
+    elif isinstance(module, torchvision.models.squeezenet.Fire):
         state['prefix'] = name # process squeeze block first
         children = list(module.named_children())
         assert len(children) == 6 , 'unexpected fire size'
@@ -223,9 +253,7 @@ def construct_layers(graph, state):
         name = name.replace('.', '_') # make comatible with MATLAB
 
         if name == 'classifier' and flatten_loc == 'classifier': 
-            layers_, state = flatten_layers(name, layers, state)
-            ipdb.set_trace()
-            layers.append(layers_)
+            layers, state = flatten_layers(name, layers, state)
 
         opts = {} 
         if state['prefix']: name = '{}_{}'.format(state['prefix'], name)
@@ -297,7 +325,8 @@ def construct_layers(graph, state):
             layers.append(pl.PTConv(*pargs, **opts))
             
         elif type(module) in [torchvision.models.resnet.Bottleneck, 
-                                torchvision.models.squeezenet.Fire]:
+                              torchvision.models.resnet.BasicBlock, 
+                              torchvision.models.squeezenet.Fire]:
             prefix_ = state['prefix'] ; state['prefix'] = name
             layers_ = process_custom_module(name, module, state) # soz Guido
             state['prefix'] = prefix_ # restore prefix
@@ -322,7 +351,7 @@ def construct_layers(graph, state):
 mods = list(net.modules())
 graph = mods[0].named_children()
 state = {'in_vars': ['data'], 'sizes': sizes, 'prefix': ''}
-layers,state = construct_layers(graph, state)
+layers, state = construct_layers(graph, state)
 
 if flatten_loc == 'end':
     name = 'final'
