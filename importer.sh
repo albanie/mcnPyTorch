@@ -1,6 +1,6 @@
 import_dir="models"
 refresh_models=true
-test_imported_models=false # (requires matlab.engine)
+test_imported_models=true # (requires matlab.engine)
 
 pushd `dirname $0` > /dev/null
 SCRIPTPATH=`pwd`

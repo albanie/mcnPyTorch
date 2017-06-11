@@ -165,9 +165,11 @@ def process_custom_module(name, module, state):
         state['in_vars'] = block[-1].outputs
 
         if downsample:
-            state_ = copy.deepcopy(state) ; state_['in_vars'] = id_var
-            down_block,_ = construct_layers([children[-1]], state_)
+            #state_ = copy.deepcopy(state) ; state_['in_vars'] = id_var
+            prev = state['in_vars']
+            down_block,_ = construct_layers([children[-1]], state)
             layers.extend(down_block)
+            state['in_vars'] = prev
             id_var = down_block[-1].outputs
 
         cat_name = '{}_cat'.format(name)
