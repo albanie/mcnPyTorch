@@ -34,8 +34,10 @@ import matlab.engine
 eng = matlab.engine.start_matlab()
 cwd = pathlib.Path.cwd()
 
+#ipdb.set_trace()
 if 1:
-    sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/test/py_check.py', '--image-size=[224,224]', '--is-torchvision-model=True', 'squeezenet1_1', 'models/squeezenet1_1-pt-mcn.mat']
+    sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/test/py_check.py', '--image-size=[224,224]', '--is-torchvision-model=True', 'resnet18', 'models/resnet18-pt-mcn.mat']
+    # sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/test/py_check.py', '--image-size=[224,224]', '--is-torchvision-model=True', 'squeezenet1_1', 'models/squeezenet1_1-pt-mcn.mat']
 
 
 parser = argparse.ArgumentParser(
@@ -92,7 +94,7 @@ x = Variable(transform(im).unsqueeze(0))
 # last = last.view(last.size(0), -1)
 # classifier_feats = get_inter_feats(net.classifier.eval(), last)
 # py_feats_tensors = feature_feats + classifier_feats
-py_feats_tensors = pl.compute_intermediate_feats(net, x, flatten_loc)
+py_feats_tensors = pl.compute_intermediate_feats(net.eval(), x, flatten_loc)
 
 # create image to pass to MATLAB and compute the feature maps
 im_np = np.array(torch.squeeze(x.data,0).numpy())
@@ -105,17 +107,45 @@ mcn_feats = [np.squeeze(np.transpose(x, (2,0,1))) for x in mcn_feats_] # to CxHx
 print('num mcn feature maps: {}'.format(len(mcn_feats)))
 print('num py feature maps: {}'.format(len(py_feats)))
 
+class PlaceHolder(object):
+
+    def __init__(self, name, module_type):
+        self.name = name
+        self.module_type = module_type
+
+    def __repr__(self):
+        return '({}, {})'.format(self.module_type, self.name)
+
 # determine feature pairing (accounts for the extra layers created to 
 # match the flattening performed before the classifier in pytorch, as 
 # well as the removal of dropout layers)
 def module_execution_order(module):
     modules = []
+    print('module type', type(module))
     children = list(module.children())
+    print('num children: {}'.format(len(children)))
     if len(children) == 0:
+        print('leaf node')
         modules.append(module)
+    elif isinstance(module, torchvision.models.resnet.BasicBlock):
+        print('block')
+        assert len(children) == 5 + bool(module.downsample), 'unexpected children'
+        submodules = children[:5]
+        prefix = list(module.named_children())[0][0]
+        if module.downsample:
+            submodules.append(PlaceHolder('{}-proj'.format(prefix), 'proj'))
+            submodules.append(PlaceHolder('{}-bn'.format(prefix), 'bn'))
+        
+        submodules.append(PlaceHolder('{}-merge'.format(prefix), 'sum'))
+        submodules.append(PlaceHolder('{}-relu'.format(prefix), 'relu'))
+        modules.extend(submodules)
+        print('running')
     else:
-        for module in children:
-            modules.extend(module_execution_order(module))
+        print('node')
+        for child in children:
+            print('proc: ', type(child))
+            modules.extend(module_execution_order(child))
+            print('stored', modules)
     return modules
 
 def get_feature_pairs(net):
@@ -128,8 +158,9 @@ def get_feature_pairs(net):
     pairs = [] 
     cursor = 0
     for py_idx in py_feat_idx:
-        # if py_idx == len(feat_modules) + 1:
-            # cursor += 1 # mcn flattening procedure uses an extra layer
+        #if py_idx == len(feat_modules)+ 1:
+        if py_idx == len(feat_modules):
+            cursor += 1 # mcn flattening procedure uses an extra layer
         if py_idx in dropout_idx and args.remove_dropout:
             print('drop zone')
             continue
@@ -146,7 +177,7 @@ for py_idx, mcn_idx in pairs:
     print('{}v{}: size py: {} vs size mcn: {}'.format(py_idx,mcn_idx,
                       py_feat.shape, mcn_feat.shape))
     diff = np.absolute(py_feat - mcn_feat).mean()
-    if diff > 1e-4:
+    if diff > 1e-2: # allow a huge margin
         print('diff: {}'.format(diff))
         print('py mean: {}'.format(py_feat.mean()))
         print('mcn mean: {}'.format(mcn_feat.mean()))

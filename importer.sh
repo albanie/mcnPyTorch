@@ -1,5 +1,5 @@
 import_dir="models"
-refresh_models=true
+refresh_models=false
 test_imported_models=true # (requires matlab.engine)
 
 pushd `dirname $0` > /dev/null

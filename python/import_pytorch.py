@@ -106,12 +106,13 @@ if args.is_torchvision_model:
 else:
     raise ValueError('not yet supported')
 
+params = net.state_dict()
+
 transform = pl.ImTransform(args.image_size, (104, 117, 123), (2, 0, 1))
 x = Variable(transform(im).unsqueeze(0))
-y = net(x)
+y = net.eval()(x)
 
-params = net.state_dict()
-feats = pl.compute_intermediate_feats(net, x, flatten_loc)
+feats = pl.compute_intermediate_feats(net.eval(), x, flatten_loc)
 sizes = [pl.tolist(feat.size()) for feat in feats] 
 
 if verbose:
@@ -166,23 +167,24 @@ def process_custom_module(name, module, state):
 
         if downsample:
             #state_ = copy.deepcopy(state) ; state_['in_vars'] = id_var
-            prev = state['in_vars']
+            prev = state['in_vars'] ; state['in_vars'] = id_var 
             down_block,_ = construct_layers([children[-1]], state)
             layers.extend(down_block)
             state['in_vars'] = prev
             id_var = down_block[-1].outputs
 
-        cat_name = '{}_cat'.format(name)
-        cat_layer = pl.PTConcat(cat_name, [*id_var, *state['in_vars']], [cat_name], 3)
-        state = update_size_info(name, 'mcn-cat', state)
-        layers.append(cat_layer)
-        state['in_vars'] = cat_layer.outputs
+        merge_name = '{}_merge'.format(name)
+        merge_layer = pl.PTSum(merge_name, [*id_var, *state['in_vars']], [merge_name])
+        state = update_size_info(name, 'mcn-sum', state)
+        layers.append(merge_layer)
+        state['in_vars'] = merge_layer.outputs
 
         # add additional ReLU to match model
         name = '{}_id_relu'.format(name)
         state['out_vars'] = [name]
         layers.append(pl.PTReLU(name, state['in_vars'], state['out_vars'])) 
         state = update_size_info(name, 'ReLU', state)
+        state['in_vars'] = state['out_vars']
 
     elif isinstance(module, torchvision.models.squeezenet.Fire):
         state['prefix'] = name # process squeeze block first
@@ -276,7 +278,7 @@ def construct_layers(graph, state):
         elif isinstance(module, torch.nn.modules.batchnorm.BatchNorm2d):
             opts['eps'] = module.eps
             opts['use_global_stats'] = module.affine
-            opts['moving_average_fraction'] = module.momentum
+            opts['momentum'] = module.momentum
             layers.append(pl.PTBatchNorm(*pargs, **opts))
             state = update_size_info(name, 'BatchNorm', state)
 

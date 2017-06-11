@@ -6,7 +6,10 @@
 import cv2
 import math
 import ipdb
+import copy
 import torch
+from torch import nn
+from torch import autograd
 import torchvision
 import numpy as np
 from collections import OrderedDict
@@ -154,6 +157,13 @@ def load_valid_pytorch_model(name):
 #                                                   Feature Extraction
 # --------------------------------------------------------------------
 
+def in_place_replica(x):
+    """ Returns a deep copy of an autograd variable's data. 
+    A number of PyTorch operations are perfomed in-place, which 
+    makes  graph comparison non-trivial. This function enables the 
+    state of the variable to be stored before it is overwritten"""
+    return copy.deepcopy(autograd.Variable(x.data))
+
 def get_custom_feats(net, x):
     children = list(net.children())
     if isinstance(net, torchvision.models.squeezenet.Fire):
@@ -171,16 +181,17 @@ def get_custom_feats(net, x):
         assert len(children) == 5 + bool(net.downsample), 'unexpected number of children'
         feats = []
         residual = x
-        out = net.conv1(x) ; feats.append(out)
-        out = net.bn1(out) ; feats.append(out)
-        out = net.relu(out) ; feats.append(out)
-        out = net.conv2(out) ; feats.append(out)
-        out = net.bn2(out) ; feats.append(out)
+        c1 = net.conv1(x) ; feats.append(c1)
+        bn1 = net.bn1(c1) ; feats.append(in_place_replica(bn1))
+        r1 = net.relu(bn1) ; feats.append(r1)
+        c2 = net.conv2(r1) ; feats.append(c2)
+        out = net.bn2(c2) ; feats.append(in_place_replica(out))
         if net.downsample: 
             projection = list(net.downsample.children())[0]
-            out = projection(residual) ; feats.append(out)
-            residual = net.downsample(residual) ; feats.append(residual)
-        out += residual ; feats.append(out)
+            proj = projection(residual) ; feats.append(in_place_replica(proj))
+            residual = net.downsample(residual) # apply sequence
+            feats.append(in_place_replica(residual))
+        out += residual ; feats.append(in_place_replica(out))
         out = net.relu(out) ; feats.append(out)
     else:
         raise ValueError('{} unrecognised custom module'.format(type(net)))
@@ -217,7 +228,8 @@ def compute_intermediate_feats(net, x, flatten_loc):
         x = x.view(x.size(0), -1)
     else:
         raise ValueError('flatten_loc: {} not recognised'.format(flatten_loc))
-    offset = len(list(net.classifier.children())) > 0
+    #offset = len(list(net.classifier.children())) > 0
+    offset = len(cls_feats) > 2
     return feature_feats + cls_feats[offset:] # drop duplicate feature if needed
 
 # --------------------------------------------------------------------
@@ -427,66 +439,35 @@ class PTConv(PTLayer):
 
 class PTBatchNorm(PTLayer):
     def __init__(self, name, inputs, outputs, use_global_stats, 
-                                             moving_average_fraction, eps):
+                                             momentum, eps):
         super().__init__(name, inputs, outputs)
 
         self.use_global_stats = use_global_stats
-        self.moving_average_fraction = moving_average_fraction
+        self.momentum = momentum
         self.eps = eps
 
-        self.params = [name + u'_mean',
-                       name + u'_variance',
-                       name + u'_scale_factor']
+        self.params = [name + u'_mult',
+                       name + u'_bias',
+                       name + u'_moments']
 
     def display(self):
         super().display()
-        print("  c- use_global_stats: %s" % (self.use_global_stats,))
-        print("  c- moving_average_fraction: %s" % (self.moving_average_fraction,))
-        print("  c- eps: %s" % (self.eps))
+        print('  c- use_global_stats: %s'.format(self.use_global_stats,))
+        print('  c- momentum: %s'.format(self.momentum,))
+        print('  c- eps: %s'.format(self.eps))
 
     def setTensor(self, model, all_params):
-        #name_ = name.replace('_'
+        # Note: PyTorch stores variances rather than sigmas
         gamma = pt_tensor_to_array(all_params['{}_weight'.format(self.name)])
         beta = pt_tensor_to_array(all_params['{}_bias'.format(self.name)])
         mean = pt_tensor_to_array(all_params['{}_running_mean'.format(self.name)])
         var = pt_tensor_to_array(all_params['{}_running_var'.format(self.name)])
-        moments = np.vstack((mean, var)).T
+        sigma = np.sqrt(var)
+        moments = np.vstack((mean, sigma)).T
         tensors = [gamma, beta, moments]
         for ii, tensor in enumerate(tensors):
             model.params[self.params[ii]].value = tensor
             model.params[self.params[ii]].shape = tensor.shape
-
-    def reshape(self, model):
-        shape = model.vars[self.inputs[0]].shape
-        mean = model.params[self.params[0]].value
-        variance = model.params[self.params[1]].value
-        scale_factor = model.params[self.params[2]].value
-        for i in range(3): del model.params[self.params[i]]
-        self.params = [self.name + u'_mult',
-                       self.name + u'_bias',
-                       self.name + u'_moments']
-
-        model.addParam(self.params[0])
-        model.addParam(self.params[1])
-        model.addParam(self.params[2])
-
-        if shape:
-            mult = np.ones((shape[2],),dtype='float32')
-            bias = np.zeros((shape[2],),dtype='float32')
-            model.params[self.params[0]].value = mult
-            model.params[self.params[0]].shape = mult.shape
-            model.params[self.params[1]].value = bias
-            model.params[self.params[1]].shape = bias.shape
-
-        if mean.size:
-            moments = np.concatenate(
-                (mean.reshape(-1,1) / scale_factor,
-                 np.sqrt(variance.reshape(-1,1) / scale_factor + self.eps)),
-                axis=1)
-            model.params[self.params[2]].value = moments
-            model.params[self.params[2]].shape = moments.shape
-
-        model.vars[self.outputs[0]].shape = shape
 
     def toMatlab(self):
         mlayer = super(PTBatchNorm, self).toMatlab()
@@ -567,6 +548,25 @@ class PTConcat(PTLayer):
         mlayer['type'][0] = u'dagnn.Concat'
         mlayer['block'][0] = dictToMatlabStruct({'dim': float(self.concatDim)})
         return mlayer
+
+
+class PTSum(PTElementWise):
+    def __init__(self, name, inputs, outputs,):
+        super().__init__(name, inputs, outputs)
+
+    def toMatlab(self):
+        mlayer = super().toMatlab()
+        mlayer['type'][0] = u'dagnn.Sum'
+        return mlayer
+
+    def setTensor(self, model, all_params):
+        pass
+
+    def display(self):
+        super().display()
+        print('  c- operation: ', self.operation)
+        print('  c- coeff: {}'.format(self.coeff))
+        print('  c- stable_prod_grad: {}'.format(self.stable_prod_grad))
 
 class PTDropout(PTElementWise):
     def __init__(self, name, inputs, outputs, ratio):

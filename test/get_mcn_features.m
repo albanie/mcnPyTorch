@@ -2,7 +2,7 @@ function feats = get_mcn_features(modelPath, im, imsz)
 %GET_MCN_FEATURES - compute all activations for a model
 
 fprintf('running in matlab\n') ;
-debug = 1 ;
+debug = 0 ;
 
 % reshape image
 im = single(cell2mat(im)) ; % input im is in pyTorch format (CxHxW)
@@ -45,13 +45,15 @@ for ii = 1:numel(dag.vars)
 end
 
 % sanity check
-tmp = load('/tmp/labels.mat') ;
-labels = tmp.labels ;
-dag.addLayer('softmax', dagnn.SoftMax(), dag.layers(end).outputs, 'prob', {}) ;
-dag.eval({'data', im})
-scores = dag.vars(dag.getVarIndex('prob')).value ;
+if debug
+  tmp = importdata('imagenet_class_index.json') ;
+  data = jsondecode(tmp{1}) ;
+  labels = cellfun(@(x) {data.(x){2}}, fieldnames(data)) ;
+  dag.addLayer('softmax', dagnn.SoftMax(), dag.layers(end).outputs, 'prob', {}) ;
+  dag.eval({'data', im})
+  scores = dag.vars(dag.getVarIndex('prob')).value ;
 
-scores = squeeze(gather(scores)) ;
-[bestScore, best] = max(scores) ;
-fprintf('%s (%d), score %.3f\n', labels{best}, best, bestScore) ;
-
+  scores = squeeze(gather(scores)) ;
+  [bestScore, best] = max(scores) ;
+  fprintf('%s (%d), score %.3f\n', labels{best}, best, bestScore) ;
+end
