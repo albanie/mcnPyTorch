@@ -101,7 +101,7 @@ def canonical_net(net, name):
     """
     restructure models to be consistent for easier processing
     """
-    if name == 'resnet18':
+    if isinstance(net, torchvision.models.resnet.ResNet):
         feats_srcs = ['conv1', 'bn1', 'relu', 'maxpool', 'layer1',
                      'layer2', 'layer3', 'layer4', 'avgpool']
         feat_layers = [getattr(net, attr) for attr in feats_srcs]
@@ -147,8 +147,18 @@ def load_valid_pytorch_model(name):
     elif name == 'resnet18':
         net = torchvision.models.resnet18(pretrained=True)
         net = canonical_net(net, name)
+    elif name == 'resnet34':
+        net = torchvision.models.resnet34(pretrained=True)
+        net = canonical_net(net, name)
     elif name == 'resnet50':
         net = torchvision.models.resnet50(pretrained=True)
+        net = canonical_net(net, name)
+    elif name == 'resnet101':
+        net = torchvision.models.resnet101(pretrained=True)
+        net = canonical_net(net, name)
+    elif name == 'resnet152':
+        net = torchvision.models.resnet152(pretrained=True)
+        net = canonical_net(net, name)
     else:
         raise ValueError('{} unrecognised torchvision model'.format(name))
     return net, flatten_loc
@@ -193,6 +203,25 @@ def get_custom_feats(net, x):
             feats.append(in_place_replica(residual))
         out += residual ; feats.append(in_place_replica(out))
         out = net.relu(out) ; feats.append(out)
+    elif isinstance(net, torchvision.models.resnet.Bottleneck):
+        assert len(children) == 7 + bool(net.downsample), 'unexpected number of children'
+        feats = []
+        residual = x
+        c1 = net.conv1(x) ; feats.append(c1)
+        bn1 = net.bn1(c1) ; feats.append(in_place_replica(bn1))
+        r1 = net.relu(bn1) ; feats.append(r1)
+        c2 = net.conv2(r1) ; feats.append(c2)
+        bn2 = net.bn2(c2) ; feats.append(in_place_replica(bn2))
+        r2 = net.relu(bn2) ; feats.append(r2)
+        c3 = net.conv3(r2) ; feats.append(c3)
+        out = net.bn3(c3) ; feats.append(in_place_replica(out))
+        if net.downsample: 
+            projection = list(net.downsample.children())[0]
+            proj = projection(residual) ; feats.append(in_place_replica(proj))
+            residual = net.downsample(residual) # apply sequence
+            feats.append(in_place_replica(residual))
+        out += residual ; feats.append(in_place_replica(out))
+        out = net.relu(out) ; feats.append(out)
     else:
         raise ValueError('{} unrecognised custom module'.format(type(net)))
     return feats
@@ -210,7 +239,8 @@ def get_feats(net, x, feats=[]):
    trunk_feats = get_feats(trunk, x, feats)
    print(type(tail))
    if type(tail) in [torchvision.models.squeezenet.Fire, 
-                     torchvision.models.resnet.BasicBlock]:
+                     torchvision.models.resnet.BasicBlock, 
+                     torchvision.models.resnet.Bottleneck]:
        tail_feats = get_custom_feats(tail, trunk_feats[-1])
    else:
        tail_feats = [net(x)]
@@ -229,6 +259,7 @@ def compute_intermediate_feats(net, x, flatten_loc):
     else:
         raise ValueError('flatten_loc: {} not recognised'.format(flatten_loc))
     #offset = len(list(net.classifier.children())) > 0
+    ipdb.set_trace()
     offset = len(cls_feats) > 2
     return feature_feats + cls_feats[offset:] # drop duplicate feature if needed
 

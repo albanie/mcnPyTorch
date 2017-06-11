@@ -134,25 +134,36 @@ def process_custom_module(name, module, state):
         children = list(module.named_children())
         assert len(children) == 7 + downsample, 'unexpected bottleneck size'
         state['prefix'] = name
-        block = construct_layers(children[:6], state)
+
+        # insert repeated ReLU
+        relu_ = children[6]
+        assert isinstance(children[6][1], torch.nn.modules.activation.ReLU), 'unusual relu location'
+        children.insert(4, ('relu2', relu_[1]))
+        children.insert(2, ('relu1', relu_[1]))
+        block, state = construct_layers(children[:8], state)
         layers.extend(block)
         state['in_vars'] = block[-1].outputs
 
         if downsample:
-            state_ = copy.deepcopy(state) ; state_['in_vars'] = id_var
-            down_block = construct_layers([children[-1]], state_)
+            prev = state['in_vars'] ; state['in_vars'] = id_var 
+            down_block,_ = construct_layers([children[-1]], state)
             layers.extend(down_block)
+            state['in_vars'] = prev
             id_var = down_block[-1].outputs
 
-        cat_name = '{}_cat'.format(name)
-        cat_layer = pl.PTConcat(cat_name, [*id_var, *state['in_vars']], [cat_name], 3)
-        layers.append(cat_layer)
-        state['in_vars'] = cat_layer.outputs
 
-        relu_idx = [child[0] for child in children].index('relu')
-        assert relu_idx > 0, 'relu not found'
-        relu = construct_layers([children[relu_idx],], state)
-        layers.extend(relu) # note that relu is a "one-layer" list
+        merge_name = '{}_merge'.format(name)
+        merge_layer = pl.PTSum(merge_name, [*id_var, *state['in_vars']], [merge_name])
+        state = update_size_info(name, 'mcn-sum', state)
+        layers.append(merge_layer)
+        state['in_vars'] = merge_layer.outputs
+
+        # add additional ReLU to match model
+        name = '{}_id_relu'.format(name)
+        state['out_vars'] = [name]
+        layers.append(pl.PTReLU(name, state['in_vars'], state['out_vars'])) 
+        state = update_size_info(name, 'ReLU', state)
+        state['in_vars'] = state['out_vars']
 
     elif isinstance(module, torchvision.models.resnet.BasicBlock):
         id_var = state['in_vars']

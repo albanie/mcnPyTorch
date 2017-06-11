@@ -1,18 +1,25 @@
-net = load(fullfile(vl_rootnn, 'contrib/mcnPyTorch/models/squeezenet1_1-pt-mcn.mat')) ;
+net = load(fullfile(vl_rootnn, 'contrib/mcnPyTorch/models/resnet34-pt-mcn.mat')) ;
 dag = dagnn.DagNN.loadobj(net) ;
 im_ = single(imresize(imread('peppers.png'), dag.meta.normalization.imageSize(1:2))) ;
+im_ = im_ / 255 ;
+im_ = bsxfun(@minus, im_, permute(dag.meta.normalization.averageImage, [3 2 1])) ;
+im_ = bsxfun(@rdivide, im_, permute(dag.meta.normalization.imageStd, [3 2 1])) ;
 dag.conserveMemory = 0 ;
 
 showNames = 0 ;
-truncate = 0 ;
+truncate = 0;
 
 if truncate
+  keep = 29 ;
   names = {dag.layers.name} ;
-  names_ = names(end-3:end) ;
+  drop = numel(names) - keep ;
+  names_ = names(end-drop:end) ;
   for ii = 1:numel(names_)
     dag.removeLayer(names_{ii}) ;
   end
 end
+
+dag.addLayer('softmax', dagnn.SoftMax(), dag.layers(end).outputs, 'prob', {}) ;
 dag.eval({'data', im_}) ;
 
 
@@ -32,3 +39,12 @@ for ii = 1:numel(dag.layers)
   end
 end
 
+tmp = importdata('imagenet_class_index.json') ;
+data = jsondecode(tmp{1}) ;
+labels = cellfun(@(x) {data.(x){2}}, fieldnames(data)) ;
+
+
+scores = dag.vars(dag.getVarIndex('prob')).value ;
+scores = squeeze(gather(scores)) ;
+[bestScore, best] = max(scores) ;
+fprintf('%s (%d), score %.3f\n', labels{best}, best, bestScore) ;
