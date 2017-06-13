@@ -1,4 +1,4 @@
-net = load(fullfile(vl_rootnn, 'contrib/mcnPyTorch/models/resnet34-pt-mcn.mat')) ;
+net = load(fullfile(vl_rootnn, 'contrib/mcnPyTorch/models/resnext_101_32x4d-pt-mcn.mat')) ;
 dag = dagnn.DagNN.loadobj(net) ;
 im_ = single(imresize(imread('peppers.png'), dag.meta.normalization.imageSize(1:2))) ;
 im_ = im_ / 255 ;
@@ -48,3 +48,8 @@ scores = dag.vars(dag.getVarIndex('prob')).value ;
 scores = squeeze(gather(scores)) ;
 [bestScore, best] = max(scores) ;
 fprintf('%s (%d), score %.3f\n', labels{best}, best, bestScore) ;
+
+if 0
+  idx = dag.getLayerIndex('features_4_0_0_0_0_3') ;
+  params = dag.params(dag.getParamIndex(dag.layers(idx).params)) ;
+

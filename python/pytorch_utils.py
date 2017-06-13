@@ -3,9 +3,15 @@
 #
 # author: Samuel Albanie
 
+import os
 import cv2
 import math
 import ipdb
+import sys
+import inspect
+import argparse
+import importlib
+import pathlib
 import copy
 import torch
 from torch import nn
@@ -13,6 +19,68 @@ from torch import autograd
 import torchvision
 import numpy as np
 from collections import OrderedDict
+
+# --------------------------------------------------------------------
+#                                                     Helpers Functions
+# --------------------------------------------------------------------
+
+def set_conversion_kwargs():
+    """parser for shared keyword arguments"""
+    parser = argparse.ArgumentParser(
+	    description='Convert model from PyTorch to MatConvNet.')
+    parser.add_argument('pytorch_model',
+			type=str,
+			help='The input should be the name of a pytorch model \
+			  (if present in pytorch.visionmodels), otherwise it \
+			  should be a path to its .pth file')
+    parser.add_argument('mcn_model',
+			type=str,
+			help='Output MATLAB file')
+    parser.add_argument('--image-size',
+                        type=str,
+                        nargs='?',
+                        default='[224,224]',
+                        help='Size of the input image')
+    parser.add_argument('--full-image-size',
+                        type=str,
+                        nargs='?',
+                        default='[256,256]',
+                        help='Size of the full image (from which crops are taken)')
+    parser.add_argument('--average-image',
+                        type=argparse.FileType('rb'),
+                        nargs='?',
+                        help='Average image')
+    parser.add_argument('--average-value',
+                        type=str,
+                        nargs='?',
+                        default=None,
+                        help='Average image value')
+    parser.add_argument('--remove-dropout',
+                        dest='remove_dropout',
+                        action='store_true',
+                        help='Remove dropout layers')
+    parser.add_argument('--remove-loss',
+                        dest='remove_loss',
+                        action='store_true',
+                        help='Remove loss layers')
+    parser.add_argument('--model-def',
+                        type=str,
+                        nargs='?',
+                        default=None,
+                        help='path to the model definition (a `.py` file)')
+    parser.add_argument('--model-weights',
+                        type=str,
+                        nargs='?',
+                        default=None,
+                        help='path to the model weights ( a `.pth` file)')
+    parser.add_argument('--append-softmax',
+                        dest='append_softmax',
+                        action='append',
+                        default=[],
+                        help='Add a softmax layer after the specified layer')
+    parser.set_defaults(remove_dropout=False)
+    parser.set_defaults(remove_loss=False)
+    return parser
 
 # --------------------------------------------------------------------
 #                                                     Helpers Functions
@@ -96,8 +164,29 @@ class ImTransform(object):
 #                                                               Models
 # --------------------------------------------------------------------
 
+class CanonicalNet(nn.Module):
 
-def canonical_net(net, name):
+
+    def __init__(self, features, classifier, flatten_loc):
+        super().__init__()
+        self.features = features
+        self.classifier = classifier
+        self.flatten_loc = flatten_loc
+
+    def forward(self, x):
+        x = self.features(x)
+        if self.flatten_loc == 'classifier':
+            x = x.view(x.size(0), -1)
+            x = self.classifier(x)
+        elif self.flatten_loc == 'end':
+            x = self.classifier(x)
+            x = x.view(x.size(0), -1)
+        else:
+            msg = 'unrecognised flatten_loc: {}'.format(self.flatten_loc)
+            raise ValueError(msg)
+        return x
+
+def canonical_net(net, name, flatten_loc='classifier'):
     """
     restructure models to be consistent for easier processing
     """
@@ -114,18 +203,31 @@ def canonical_net(net, name):
             # TODO(sam): explain the logic
             x = net.features(x)
             x = x.view(x.size(0), -1)
-            x = net.classifier(x)
-            return x
+            return net.classifier(x)
 
         net.forward = forward
+    elif name in ['resnext_50_32x4d', 'resnext_101_32x4d']:
+        children = list(net.children())  
+        feat_layers = copy.deepcopy(children[:-2])
+        tail = copy.deepcopy(net)
+        while not isinstance(tail, torch.nn.modules.linear.Linear):
+            tail = list(tail.children())[-1]
+        classifier = torch.nn.modules.Sequential(tail)
+        features = torch.nn.modules.Sequential(*feat_layers)
+        net = CanonicalNet(features, classifier, flatten_loc)
     else:
         raise ValueError('{} unrecognised torchvision model'.format(name))
     return net
 
 
 
-def load_valid_pytorch_model(name):
+def load_pytorch_model(name, paths=None):
     flatten_loc = 'classifier' # by default, flattening occurs before classifier
+    if paths: # load custom net params and defs
+        def_path = pathlib.Path(paths['def'])
+        sys.path.insert(0, str(def_path.parent))
+        model_def = importlib.import_module(str(def_path.stem))
+
     if name == 'alexnet':
         net = torchvision.models.alexnet(pretrained=True)
     elif name == 'vgg11':
@@ -159,6 +261,14 @@ def load_valid_pytorch_model(name):
     elif name == 'resnet152':
         net = torchvision.models.resnet152(pretrained=True)
         net = canonical_net(net, name)
+    elif name == 'resnext_50_32x4d':
+        net = model_def.resnext_50_32x4d 
+        net.load_state_dict(torch.load(paths['weights']))
+        net = canonical_net(net, name, flatten_loc=flatten_loc)
+    elif name == 'resnext_101_32x4d':
+        net = model_def.resnext_101_32x4d 
+        net.load_state_dict(torch.load(paths['weights']))
+        net = canonical_net(net, name, flatten_loc=flatten_loc)
     else:
         raise ValueError('{} unrecognised torchvision model'.format(name))
     return net, flatten_loc
@@ -166,6 +276,13 @@ def load_valid_pytorch_model(name):
 # --------------------------------------------------------------------
 #                                                   Feature Extraction
 # --------------------------------------------------------------------
+
+class MapReducePair(object):
+    def __init__(self, map, reduce):
+        self.map = map
+        self.reduce = reduce
+
+    def children(self): return [] # maintain interface
 
 def in_place_replica(x):
     """ Returns a deep copy of an autograd variable's data. 
@@ -222,25 +339,66 @@ def get_custom_feats(net, x):
             feats.append(in_place_replica(residual))
         out += residual ; feats.append(in_place_replica(out))
         out = net.relu(out) ; feats.append(out)
+    elif isinstance(net, MapReducePair):
+        _map, _reduce = net.map.lambda_func, net.reduce.lambda_func
+        if _map(1) != 1: raise ValueError('only identity map supported')
+        if _reduce(1,1) != 2: raise ValueError('only summation reduce supported')
+        feats = []
+        id_map = x
+        base = nn.Sequential(*net.map[0])
+        base_feats = get_feats(base, id_map, []) ; feats.extend(base_feats[1:])
+        if not hasattr(net.map[1], 'lambda_func'): # projection exists
+            projection = nn.Sequential(net.map[1])
+            proj = get_feats(projection, id_map, []) ; feats.extend(proj[1:])
+            id_map = proj[-1]
+        else:
+            assert net.map[1].lambda_func(1) == 1, 'non projection should be identity'
+        out = id_map + base_feats[-1] ; feats.append(out)
     else:
         raise ValueError('{} unrecognised custom module'.format(type(net)))
     return feats
+
+def has_lambda_child(module):
+    has_children = len(list(module.children())) > 0
+    return  has_children and is_lambda_map(list(module.children())[0])
+
+def is_lambda_map(mod):
+    """check for the presence of the LambdaMap block used by the
+    torch -> pytorch converter
+    """
+    return 'LambdaMap' in mod.__repr__().split('\n')[0]
+
+def is_lambda_reduce(mod):
+    """check for the presence of the LambdReduce block used by the
+    torch -> pytorch converter
+    """
+    return 'LambdaReduce' in mod.__repr__().split('\n')[0]
 
 def get_feats(net, x, feats=[]):
    children = list(net.children())
    if len(children) == 0:
        return [net(x)]
    head, tail = children[:-1], children[-1]
-   while isinstance(tail, torch.nn.Sequential):
-       children = list(tail.children())
-       head_, tail = children[:-1], children[-1]
-       head = head + head_ 
+
+   # handle chunking for models imported from torch (lua)
+   # use a string check hack to avoid adding a module import 
+   # path dependency
+   if is_lambda_reduce(tail):
+       assert is_lambda_map(head[-1]), 'invalid map reduce pair'
+       tail = MapReducePair(head[-1], tail)
+       head = head[:-1] # adjust head
+   else: # standard model structure
+       while isinstance(tail, torch.nn.Sequential): 
+           children = list(tail.children())
+           head_, tail = children[:-1], children[-1]
+           head = head + head_ 
+
    trunk = torch.nn.Sequential(*head)
    trunk_feats = get_feats(trunk, x, feats)
-   print(type(tail))
    if type(tail) in [torchvision.models.squeezenet.Fire, 
                      torchvision.models.resnet.BasicBlock, 
-                     torchvision.models.resnet.Bottleneck]:
+                     torchvision.models.resnet.Bottleneck,
+                     MapReducePair]:
        tail_feats = get_custom_feats(tail, trunk_feats[-1])
    else:
        tail_feats = [net(x)]
@@ -259,7 +417,6 @@ def compute_intermediate_feats(net, x, flatten_loc):
     else:
         raise ValueError('flatten_loc: {} not recognised'.format(flatten_loc))
     #offset = len(list(net.classifier.children())) > 0
-    ipdb.set_trace()
     offset = len(cls_feats) > 2
     return feature_feats + cls_feats[offset:] # drop duplicate feature if needed
 
@@ -454,7 +611,7 @@ class PTConv(PTLayer):
 
     def toMatlab(self):
         size = self.kernel_size + [self.filter_depth, self.num_output]
-        mlayer = super(PTConv, self).toMatlab()
+        mlayer = super().toMatlab()
         mlayer['type'][0] = u'dagnn.Conv'
         mlayer['block'][0] = dictToMatlabStruct(
             {'hasBias': self.bias_term,
@@ -501,7 +658,7 @@ class PTBatchNorm(PTLayer):
             model.params[self.params[ii]].shape = tensor.shape
 
     def toMatlab(self):
-        mlayer = super(PTBatchNorm, self).toMatlab()
+        mlayer = super().toMatlab()
         mlayer['type'][0] = u'dagnn.BatchNorm'
         mlayer['block'][0] = dictToMatlabStruct(
             {'epsilon': self.eps})
@@ -629,7 +786,7 @@ class PTFlatten(PTLayer):
         pass
 
     def toMatlab(self):
-        mlayer = super(PTFlatten, self).toMatlab()
+        mlayer = super().toMatlab()
         mlayer['type'][0] = u'dagnn.Flatten'
         mlayer['block'][0] = dictToMatlabStruct(
             {'axis': self.axis})

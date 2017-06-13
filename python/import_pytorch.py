@@ -7,6 +7,7 @@ import scipy.io
 import torchvision
 from collections import OrderedDict
 import pytorch_utils as pl
+from torch import nn
 from torch.autograd import Variable
 from ast import literal_eval as make_tuple
 import ipdb
@@ -33,61 +34,16 @@ if debug:
     from zsvision.zs_iterm import zs_dispFig
 
 if debug:
-    sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/python/import_pytorch.py', '--image-size=[224,224]', '--full-image-size=[256,256]', '--is-torchvision-model=True', 'squeezenet1_0', 'models/squeezenet1_0-pt-mcn.mat']
+    sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/python/import_pytorch.py', '--image-size=[224,224]', '--full-image-size=[256,256]', '--model-def=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.py', '--model-weights=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.pth', 'resnext_101_32x4d', 'models/resnext_101_32x4d-pt-mcn.mat']
 
-parser = argparse.ArgumentParser(
-           description='Convert model from PyTorch to MatConvNet.')
-parser.add_argument('input',
-                    type=str,
-                    help='The input should be the name of a pytorch model \
-                      (if present in pytorch.visionmodels), otherwise it \
-                      should be a path to its .pth file')
-parser.add_argument('output',
-                    type=str,
-                    help='Output MATLAB file')
-parser.add_argument('--image-size',
-                    type=str,
-                    nargs='?',
-                    default='[224,224]',
-                    help='Size of the input image')
-parser.add_argument('--full-image-size',
-                    type=str,
-                    nargs='?',
-                    default='[256,256]',
-                    help='Size of the full image (from which crops are taken)')
-parser.add_argument('--is-torchvision-model',
-                    type=bool,
-                    nargs='?',
-                    default=True,
-                    help='is the model part of the torchvision.models')
-parser.add_argument('--average-image',
-                    type=argparse.FileType('rb'),
-                    nargs='?',
-                    help='Average image')
-parser.add_argument('--average-value',
-                    type=str,
-                    nargs='?',
-                    default=None,
-                    help='Average image value')
-parser.add_argument('--remove-dropout',
-                    dest='remove_dropout',
-                    action='store_true',
-                    help='Remove dropout layers')
-parser.add_argument('--remove-loss',
-                    dest='remove_loss',
-                    action='store_true',
-                    help='Remove loss layers')
-parser.add_argument('--append-softmax',
-                    dest='append_softmax',
-                    action='append',
-                    default=[],
-                    help='Add a softmax layer after the specified layer')
-parser.set_defaults(remove_dropout=False)
-parser.set_defaults(remove_loss=False)
-args = parser.parse_args()
+parser = pl.set_conversion_kwargs()
+args = parser.parse_args(sys.argv[1:]) # allows for shared parsing
 
 args.image_size = tuple(make_tuple(args.image_size))
 args.full_image_size = tuple(make_tuple(args.full_image_size))
+
+if args.model_def and args.model_weights:
+    model_paths = {'def': args.model_def, 'weights': args.model_weights}
 
 # forward pass to compute pytorch feature sizes
 im = scipy.misc.face()
@@ -101,10 +57,7 @@ if debug:
 # vgg = model_dir / 'vgg16-397923af.pth'
 
 # params = torch.load(str(vgg))
-if args.is_torchvision_model:
-    net,flatten_loc = pl.load_valid_pytorch_model(args.input)
-else:
-    raise ValueError('not yet supported')
+net,flatten_loc = pl.load_pytorch_model(args.pytorch_model, paths=model_paths)
 
 params = net.state_dict()
 
@@ -137,7 +90,7 @@ def process_custom_module(name, module, state):
 
         # insert repeated ReLU
         relu_ = children[6]
-        assert isinstance(children[6][1], torch.nn.modules.activation.ReLU), 'unusual relu location'
+        assert isinstance(children[6][1], nn.modules.activation.ReLU), 'unusual relu location'
         children.insert(4, ('relu2', relu_[1]))
         children.insert(2, ('relu1', relu_[1]))
         block, state = construct_layers(children[:8], state)
@@ -215,6 +168,46 @@ def process_custom_module(name, module, state):
         state = update_size_info(name, 'mcn-cat', state)
         layers.append(cat_layer)
         state['out_vars'] = cat_layer.outputs
+    elif pl.is_lambda_map(list(module.children())[0]):
+        id_var = state['in_vars']
+        children = list(module.named_children())
+        assert pl.is_lambda_reduce(children[1][1]), 'invalid map reduce pair'
+        _map, _reduce = children[0][1].lambda_func, children[1][1].lambda_func
+        if _map(1) != 1: raise ValueError('only identity map supported')
+        if _reduce(1,1) != 2: raise ValueError('only summation reduce supported')
+        state['prefix'] = '{}_{}'.format(name, children[0][0]) # handle skipped prefix
+        trunk = list(children[0][1].named_children())[0]
+        #base = list(trunk[1].named_children())[0]
+        block, state = construct_layers([trunk], state)
+        layers.extend(block)
+        state['in_vars'] = block[-1].outputs
+
+        projection = list(children[0][1].named_children())[1]
+        if not hasattr(projection[1], 'lambda_func'): # projection exists
+            prev = state['in_vars'] ; state['in_vars'] = id_var 
+            down_block,_ = construct_layers([projection], state)
+            layers.extend(down_block)
+            state['in_vars'] = prev
+            id_var = down_block[-1].outputs
+        else:
+            msg = 'non projection should be identity'
+            assert projection[1].lambda_func(1) == 1, msg
+
+        merge_name = '{}_merge'.format(name)
+        merge_layer = pl.PTSum(merge_name, [*id_var, *state['in_vars']], [merge_name])
+        state = update_size_info(name, 'mcn-sum', state)
+        layers.append(merge_layer)
+        state['in_vars'] = merge_layer.outputs
+
+        # add additional ReLU to match model
+        msg = 'expected ReLU at end of lambda unit'
+        assert isinstance(children[-1][1], nn.modules.activation.ReLU), msg
+
+        name = '{}_id_relu'.format(name)
+        state['out_vars'] = [name]
+        layers.append(pl.PTReLU(name, state['in_vars'], state['out_vars'])) 
+        state = update_size_info(name, 'ReLU', state)
+        state['in_vars'] = state['out_vars']
     else:
         raise ValueError('unrecognised module {}'.format(type(module)))
     return layers
@@ -275,7 +268,7 @@ def construct_layers(graph, state):
         state['out_vars'] = [name]
         pargs = [name, state['in_vars'], state['out_vars']]
 
-        if isinstance(module, torch.nn.modules.conv.Conv2d):
+        if isinstance(module, nn.modules.conv.Conv2d):
             opts['bias_term'] = bool(module.bias)
             opts['num_output'] = module.out_channels
             opts['kernel_size'] = module.kernel_size
@@ -286,18 +279,18 @@ def construct_layers(graph, state):
             layers.append(pl.PTConv(*pargs, **opts))
             state = update_size_info(name, 'Conv2d', state)
 
-        elif isinstance(module, torch.nn.modules.batchnorm.BatchNorm2d):
+        elif isinstance(module, nn.modules.batchnorm.BatchNorm2d):
             opts['eps'] = module.eps
             opts['use_global_stats'] = module.affine
             opts['momentum'] = module.momentum
             layers.append(pl.PTBatchNorm(*pargs, **opts))
             state = update_size_info(name, 'BatchNorm', state)
 
-        elif isinstance(module, torch.nn.modules.activation.ReLU):
+        elif isinstance(module, nn.modules.activation.ReLU):
             layers.append(pl.PTReLU(*pargs))
             state = update_size_info(name, 'ReLU', state)
 
-        elif isinstance(module, torch.nn.modules.dropout.Dropout):
+        elif isinstance(module, nn.modules.dropout.Dropout):
             if not args.remove_dropout:
                 opts['ratio'] = module.p # TODO: check that this shouldn't be 1 - p
                 layers.append(pl.PTDropout(*pargs, **opts))
@@ -305,7 +298,7 @@ def construct_layers(graph, state):
                 state['out_vars'] = state['in_vars']
             state = update_size_info(name, 'Dropout', state)
 
-        elif isinstance(module, torch.nn.modules.pooling.MaxPool2d):
+        elif isinstance(module, nn.modules.pooling.MaxPool2d):
             in_out_sz = state['sizes'][:2]
             state = update_size_info(name, 'MaxPool', state)
             opts['method'] = 'max'
@@ -316,7 +309,7 @@ def construct_layers(graph, state):
             opts['sizes'] = in_out_sz
             layers.append(pl.PTPooling(*pargs, **opts))
 
-        elif isinstance(module, torch.nn.modules.pooling.AvgPool2d):
+        elif isinstance(module, nn.modules.pooling.AvgPool2d):
             in_out_sz = state['sizes'][:2]
             state = update_size_info(name, 'AvgPool', state)
             opts['method'] = 'avg'
@@ -327,7 +320,7 @@ def construct_layers(graph, state):
             opts['sizes'] = in_out_sz
             layers.append(pl.PTPooling(*pargs, **opts))
 
-        elif isinstance(module, torch.nn.modules.linear.Linear):
+        elif isinstance(module, nn.modules.linear.Linear):
             state = update_size_info(name, 'Linear', state)
             opts['bias_term'] = bool(module.bias)
             opts['filter_depth'] = module.in_features
@@ -339,15 +332,17 @@ def construct_layers(graph, state):
             opts['group'] = 1
             layers.append(pl.PTConv(*pargs, **opts))
             
+
         elif type(module) in [torchvision.models.resnet.Bottleneck, 
                               torchvision.models.resnet.BasicBlock, 
-                              torchvision.models.squeezenet.Fire]:
+                              torchvision.models.squeezenet.Fire] or \
+                              pl.has_lambda_child(module):
             prefix_ = state['prefix'] ; state['prefix'] = name
             layers_ = process_custom_module(name, module, state) # soz Guido
             state['prefix'] = prefix_ # restore prefix
             layers.extend(layers_)
 
-        elif isinstance(module, torch.nn.modules.container.Sequential):
+        elif isinstance(module, nn.modules.container.Sequential):
             print('flattening sequence: {}'.format(name))
             children = list(module.named_children())
             prefix_ = state['prefix'] ; state['prefix'] = name
@@ -361,11 +356,14 @@ def construct_layers(graph, state):
         else:
             raise ValueError('unrecognised module {}'.format(type(module)))
         state['in_vars'] = state['out_vars']
+
+        if name == '8':
+            ipdb.set_trace()
     return layers, state
 
 mods = list(net.modules())
 graph = mods[0].named_children()
-state = {'in_vars': ['data'], 'sizes': sizes, 'prefix': ''}
+state = {'in_vars': ['data'], 'sizes': sizes[:], 'prefix': ''}
 layers, state = construct_layers(graph, state)
 
 if flatten_loc == 'end':
@@ -382,9 +380,9 @@ for layer in layers:
     if debug:
         print('---------')
         print('{} has type: {}'.format(name, type(layer)))
-        print('name', l.name)
-        print('inputs', l.inputs)
-        print('outputs', l.outputs)
+        print('name', layer.name)
+        print('inputs', layer.inputs)
+        print('outputs', layer.outputs)
 
 # --------------------------------------------------------------------
 #                                                        Normalization
@@ -411,9 +409,9 @@ mnormalization = {
 fw = max(args.full_image_size[0], dataShape[1])
 fh = max(args.full_image_size[0], dataShape[0])
 mnormalization['border'] = max([float(fw - dataShape[1]),
-                              float(fh - dataShape[0])])
+                  float(fh - dataShape[0])])
 mnormalization['cropSize'] = min([float(dataShape[1]) / fw,
-                                float(dataShape[0]) / fh])
+                float(dataShape[0]) / fh])
 
 # --------------------------------------------------------------------
 #                                                    Convert to MATLAB
@@ -426,8 +424,8 @@ mmeta = pl.dictToMatlabStruct(meta_dict)
 # This object should stay a dictionary and not a NumPy array due to
 # how NumPy saves to MATLAB
 mnet = {'layers': np.empty(shape=[0,], dtype=pl.mlayerdt),
-        'params': np.empty(shape=[0,], dtype=pl.mparamdt),
-        'meta': mmeta}
+    'params': np.empty(shape=[0,], dtype=pl.mparamdt),
+    'meta': mmeta}
 
 for layer in ptmodel.layers.values():
     mnet['layers'] = np.append(mnet['layers'], layer.toMatlab(), axis=0)
