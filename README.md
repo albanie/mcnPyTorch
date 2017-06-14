@@ -43,3 +43,9 @@ vl_contrib('setup', 'mcnPyTorch', 'contribUrl', 'github.com/albanie/matconvnet-c
 ```
 
 **Dependencies**: `Python3` and `PyTorch`, and a few other modules which should be easy to install with `conda`.
+
+
+### Notes
+
+* The normalisation used by the pretrained PyTorch models differs significantly from the typical matconvnet approach (see [here](https://github.com/albanie/mcnPyTorch/blob/master/benchmarks/cnn_imagenet_pt_mcn.m#L95) for an example).
+* The weights in the converted model are modified slightly from the originals to compensate for differences in certain computational blocks.  For instance, PyTorch adds an `espilon` term to batch norm denominator during both training and inference.
