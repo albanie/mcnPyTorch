@@ -3,6 +3,7 @@ function run_benchmarks
 
 gpus = [3] ;
 batchSize = 256 ;
+useCached = 1 ; % load results from cache if available
 
 importedModels = {
 'alexnet-pt-mcn', ...
@@ -24,13 +25,13 @@ importedModels = {
 
 for ii = 1:numel(importedModels)
   model = importedModels{ii} ;
-  imagenet_eval(model, batchSize, gpus, cont) ;
+  imagenet_eval(model, batchSize, gpus, useCached) ;
 end
 
-% --------------------------------------------------
-function imagenet_eval(model, batchSize, gpus, cont)
-% --------------------------------------------------
+% -------------------------------------------------------
+function imagenet_eval(model, batchSize, gpus, useCached)
+% -------------------------------------------------------
 [~,info] = cnn_imagenet_pt_mcn('model', model, 'batchSize', ...
-                               batchSize, 'gpus', gpus, 'continue', cont) ;
+               batchSize, 'gpus', gpus, 'continue', useCached) ;
 top1 = info.val.top1err * 100 ; top5 = info.val.top5err * 100 ;
 fprintf('%s: top-1: %.2f, top-5: %.2f\n', model, top1, top5) ;
