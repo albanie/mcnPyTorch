@@ -34,9 +34,6 @@ import matlab.engine
 eng = matlab.engine.start_matlab()
 cwd = pathlib.Path.cwd()
 
-# if 0:
-    # sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/test/py_check.py', '--image-size=[224,224]', '--model-def=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.py', '--model-weights=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.pth', 'resnext_101_32x4d', 'models/resnext_101_32x4d-pt-mcn.mat']
-
 
 parser = pl.set_conversion_kwargs()
 args = parser.parse_args(sys.argv[1:]) # allows for shared parsing

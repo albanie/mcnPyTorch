@@ -4,19 +4,24 @@ PyTorch model converter
 A tool for converting [PyTorch](https://github.com/pytorch/pytorch) models into 
 [MatConvNet](https://github.com/vlfeat/matconvnet). This is a work in progress.
 
-### torchvision models
+### Imported pretrained models
 
-Some of the useful models available in the `torchvision.models` module 
+Some of the useful pretrained models available in the `torchvision.models` module 
 have been converted into MatConvNet and are available for download at the link
 below: 
 
-[imported torchvision models](http://www.robots.ox.ac.uk/~albanie/models.html#pytorch-models)
+[Torchvision models](http://www.robots.ox.ac.uk/~albanie/models.html#pytorch-models)
+
+The *ResNeXt* family of models have also been imported and are available for download:
+
+[ResNeXt models](http://www.robots.ox.ac.uk/~albanie/models.html#resnext-models)
 
 ### Converting your own models
 
 The conversion script requires Python (with PyTorch installed) and MATLAB. 
 Converting models between frameworks tends to be a non-trivial task, so it is 
-likely that modifications will be needed for unusual models.
+likely that modifications will be needed for unusual models.  To get started, 
+see the `importer.sh` script (this can be modified to import new models).
 
 ### Installation
 
@@ -38,4 +43,3 @@ vl_contrib('setup', 'mcnPyTorch', 'contribUrl', 'github.com/albanie/matconvnet-c
 ```
 
 **Dependencies**: `Python3` and `PyTorch`, and a few other modules which should be easy to install with `conda`.
-
