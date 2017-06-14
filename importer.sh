@@ -38,19 +38,16 @@ function convert_model()
     fi
 }
 	
-#declare -a model_list=("alexnet" "vgg11" "vgg13" "vgg16" "vgg19" \ 
-                       #"squeezenet1_0" "squeezenet1_1")
-#declare -a model_list=("resnet152")
-#declare -a model_list=("vgg16")
+# Example models from the torchvision module
+declare -a model_list=("alexnet" "vgg11" "vgg13" "vgg16" "vgg19" \ 
+                       "squeezenet1_0" "squeezenet1_1" "resnet152" )
+
+# alternatively, specify a custom model (will require modifications to 
+# the python source to add support for unrecognised layers)
 declare -a model_list=("resnext_101_32x4d")
 model_def="${HOME}/.torch/models/resnext_101_32x4d.py"
 weights="${HOME}/.torch/models/resnext_101_32x4d.pth"
-#declare -a model_list=("resnext_50_32x4d")
-#model_def="${HOME}/.torch/models/resnext_50_32x4d.py"
-#weights="${HOME}/.torch/models/resnext_50_32x4d.pth"
-#declare -a model_list=("resnext_101_64x4d")
-#model_def="${HOME}/.torch/models/resnext_101_64x4d.py"
-#weights="${HOME}/.torch/models/resnext_101_64x4d.pth"
+
 for pytorch_model in "${model_list[@]}"
 do
     mcn_model_path="${import_dir}/${pytorch_model}-pt-mcn.mat"
