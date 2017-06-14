@@ -1,78 +1,42 @@
-import sys, os, copy
-import argparse
+import os
+import sys
+import copy
+import ipdb
 import torch
-from pathlib import Path
-import numpy as np
+import argparse
 import scipy.io
 import torchvision
-from collections import OrderedDict
-import pytorch_utils as pl
+import numpy as np
 from torch import nn
+from pathlib import Path
+import pytorch_utils as pl
+from collections import OrderedDict
 from torch.autograd import Variable
 from ast import literal_eval as make_tuple
-import ipdb
 
-debug = 0
-verbose = 1
-
-if debug:
-    from IPython import get_ipython
-    ipython = get_ipython()
-    ipython.magic('load_ext autoreload')
-    ipython.magic('autoreload 2')
-
-    # breakpoint on exception
-    from IPython.core import ultratb
-    sys.excepthook = ultratb.FormattedTB(mode='Verbose',
-         color_scheme='Linux', call_pdb=1)
-
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    path = os.path.expanduser('~/coding/src/zsvision/python')
-    sys.path.insert(0, path) # lazy
-    from zsvision.zs_iterm import zs_dispFig
-
-# if debug:
-    # sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/python/import_pytorch.py', '--image-size=[224,224]', '--full-image-size=[256,256]', '--model-def=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.py', '--model-weights=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.pth', 'resnext_101_32x4d', 'models/resnext_101_32x4d-pt-mcn.mat']
-
+# parse args
 parser = pl.set_conversion_kwargs()
-args = parser.parse_args(sys.argv[1:]) # allows for shared parsing
+args = parser.parse_args(sys.argv[1:])
 
-args.image_size = tuple(make_tuple(args.image_size))
-args.full_image_size = tuple(make_tuple(args.full_image_size))
-
+# load model
 if args.model_def and args.model_weights:
     model_paths = {'def': args.model_def, 'weights': args.model_weights}
-
-# forward pass to compute pytorch feature sizes
-im = scipy.misc.face()
-im = scipy.misc.imresize(im, args.image_size)
-
-if debug:
-    plt.imshow(im) 
-    zs_dispFig()
-
-# model_dir = Path('/users/albanie/coding/libs/convert_torch_to_pytorch/models')
-# vgg = model_dir / 'vgg16-397923af.pth'
-
-# params = torch.load(str(vgg))
 net,flatten_loc = pl.load_pytorch_model(args.pytorch_model, paths=model_paths)
-
 params = net.state_dict()
 
+# forward pass to compute pytorch feature sizes
+args.image_size = tuple(make_tuple(args.image_size))
+args.full_image_size = tuple(make_tuple(args.full_image_size))
+im = scipy.misc.imresize(scipy.misc.face(), args.image_size)
 transform = pl.ImTransform(args.image_size, (104, 117, 123), (2, 0, 1))
 x = Variable(transform(im).unsqueeze(0))
-y = net.eval()(x)
-
 feats = pl.compute_intermediate_feats(net.eval(), x, flatten_loc)
 sizes = [pl.tolist(feat.size()) for feat in feats] 
 
-if verbose:
-    for sz in sizes:
-        print(sz)
+for sz in sizes:
+    print(sz)
 
-# rename keys to make compatible (duplicates params)
+# rename keys to make compatible with MATLAB
 tmp = OrderedDict()
 for key in params:
     new_name = key.replace('.', '_')
@@ -90,7 +54,8 @@ def process_custom_module(name, module, state):
 
         # insert repeated ReLU
         relu_ = children[6]
-        assert isinstance(children[6][1], nn.modules.activation.ReLU), 'unusual relu location'
+        is_relu = isinstance(relu_[1], nn.modules.activation.ReLU)
+        assert is_relu, 'unusual relu location'
         children.insert(4, ('relu2', relu_[1]))
         children.insert(2, ('relu1', relu_[1]))
         block, state = construct_layers(children[:8], state)
@@ -130,7 +95,6 @@ def process_custom_module(name, module, state):
         state['in_vars'] = block[-1].outputs
 
         if downsample:
-            #state_ = copy.deepcopy(state) ; state_['in_vars'] = id_var
             prev = state['in_vars'] ; state['in_vars'] = id_var 
             down_block,_ = construct_layers([children[-1]], state)
             layers.extend(down_block)
@@ -177,7 +141,6 @@ def process_custom_module(name, module, state):
         if _reduce(1,1) != 2: raise ValueError('only summation reduce supported')
         state['prefix'] = '{}_{}'.format(name, children[0][0]) # handle skipped prefix
         trunk = list(children[0][1].named_children())[0]
-        #base = list(trunk[1].named_children())[0]
         block, state = construct_layers([trunk], state)
         layers.extend(block)
         state['in_vars'] = block[-1].outputs
@@ -377,12 +340,11 @@ for layer in layers:
     ptmodel.add_layer(layer)
     # load parameter values
     layer.setTensor(ptmodel, params)
-    if debug:
-        print('---------')
-        print('{} has type: {}'.format(name, type(layer)))
-        print('name', layer.name)
-        print('inputs', layer.inputs)
-        print('outputs', layer.outputs)
+    print('---------')
+    print('{} has type: {}'.format(name, type(layer)))
+    print('name', layer.name)
+    print('inputs', layer.inputs)
+    print('outputs', layer.outputs)
 
 # --------------------------------------------------------------------
 #                                                        Normalization
