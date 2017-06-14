@@ -1,8 +1,11 @@
-function [dag, info] = cnn_imagenet_pt_mcn(varargin)
+function [net, info] = cnn_imagenet_pt_mcn(varargin)
 % CNN_IMAGENET_PT_MCN Evaluate imported PyTorch models on ImageNet val set
 % (closely based on the mcn cnn_imagenet.m example)
 
 opts.model = 'alexnet-pt-mcn' ;
+opts.batchSize = 256 ;
+opts.continue = 1 ;
+opts.gpus = [3] ;
 opts.dataDir = fullfile(vl_rootnn, 'data/datasets/ILSVRC2012') ;
 opts.modelDir = fullfile(vl_rootnn, 'contrib/mcnPyTorch/models') ;
 [opts, varargin] = vl_argparse(opts, varargin) ;
@@ -12,10 +15,10 @@ opts.expDir = fullfile(vl_rootnn, 'data', ['imagenet12-' opts.model]) ;
 
 opts.numFetchThreads = 12 ;
 opts.lite = false ;
-opts.imdbPath = fullfile(opts.expDir, 'imdb.mat');
+opts.imdbPath = fullfile(vl_rootnn, 'data', 'imagenet12', 'imdb.mat');
 opts.train = struct() ;
 opts = vl_argparse(opts, varargin) ;
-opts.train.gpus = [3] ;
+opts.train.gpus = opts.gpus ;
 
 % -------------------------------------------------------------------------
 %                                                              Prepare data
@@ -34,25 +37,41 @@ end
 % -------------------------------------------------------------------------
 %                                                             Prepare model
 % -------------------------------------------------------------------------
-modelPath = fullfile(opts.modelDir, opts.model) ;
-dag = dagnn.DagNN.loadobj(modelPath) ;
+net = load_model(opts.modelDir, opts.model) ;
+
+% modify the imdb to skip training images
+imdb.images.set(imdb.images.set == 1) = 4 ;
+[net, info] = cnn_train_dag(net, imdb, getBatchFn(opts, net.meta), ...
+                            'expDir', opts.expDir, 'gpus', opts.train.gpus, ...
+                            'numEpochs', 1, 'continue', opts.continue, ...
+                            'batchSize', opts.batchSize) ;
+
+% hack the checkpoint file to save an empty dag
+modelPath = fullfile(opts.expDir, 'net-epoch-1.mat') ; tmp = load(modelPath) ;
+net_ = net ; net = dagnn.DagNN().saveobj() ; stats = tmp.stats ; state = {} ;
+save(modelPath, 'net', 'stats', 'state') ; net = net_ ;
+
+% -------------------------------------------------------------------------
+function dag = load_model(modelDir, name)
+% -------------------------------------------------------------------------
+modelPath = fullfile(modelDir, sprintf('%s.mat', name)) ;
+if ~exist(modelDir, 'dir') 
+  mkdir(modelDir) ;
+end
+
+if ~exist(modelPath, 'file')
+  fprintf('Downloading the %s model ... this may take a while\n', name) ;
+  base = 'http://www.robots.ox.ac.uk/~albanie' ;
+  url = sprintf('%s/models/pytorch-imports/%s.mat', base, name) ;
+  urlwrite(url, modelPath) ;
+end
+
+dag = dagnn.DagNN.loadobj(load(modelPath)) ;
 dag.addLayer('softmax', dagnn.SoftMax(), dag.layers(end).outputs, 'prediction', {}) ;
 dag.addLayer('top1err', dagnn.Loss('loss', 'classerror'), ...
              {'prediction','label'}, 'top1err') ;
 dag.addLayer('top5err', dagnn.Loss('loss', 'topkerror', 'opts', {'topK',5}), ...
              {'prediction','label'}, 'top5err') ;
-
-if strcmp(opts.model, 'alexnet-pt-mcn')
-  dag.meta.normalisation.cropSize = 224 / 256 ;
-  %dag.meta.normalisation.imageSize = [227 227] ;
-end
-
-
-% modify the imdb to skip training images
-imdb.images.set(imdb.images.set == 1) = 4 ;
-[dag, info] = cnn_train_dag(dag, imdb, getBatchFn(opts, dag.meta), ...
-                            'expDir', opts.expDir, 'gpus', opts.train.gpus, ...
-                             'numEpochs', 1, 'continue', 0) ;
 
 % -------------------------------------------------------------------------
 function fn = getBatchFn(opts, meta)
