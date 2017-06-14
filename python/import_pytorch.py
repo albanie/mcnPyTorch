@@ -33,8 +33,8 @@ if debug:
     sys.path.insert(0, path) # lazy
     from zsvision.zs_iterm import zs_dispFig
 
-if debug:
-    sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/python/import_pytorch.py', '--image-size=[224,224]', '--full-image-size=[256,256]', '--model-def=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.py', '--model-weights=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.pth', 'resnext_101_32x4d', 'models/resnext_101_32x4d-pt-mcn.mat']
+# if debug:
+    # sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/python/import_pytorch.py', '--image-size=[224,224]', '--full-image-size=[256,256]', '--model-def=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.py', '--model-weights=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.pth', 'resnext_101_32x4d', 'models/resnext_101_32x4d-pt-mcn.mat']
 
 parser = pl.set_conversion_kwargs()
 args = parser.parse_args(sys.argv[1:]) # allows for shared parsing
@@ -441,5 +441,5 @@ mnet['params'] = mnet['params'].reshape(1,-1)
 #                                                  Save converted model
 # --------------------------------------------------------------------
 
-print('Saving network to {}'.format(args.output))
-scipy.io.savemat(args.output, mnet, oned_as='column')
+print('Saving network to {}'.format(args.mcn_model))
+scipy.io.savemat(args.mcn_model, mnet, oned_as='column')

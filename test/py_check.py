@@ -34,8 +34,8 @@ import matlab.engine
 eng = matlab.engine.start_matlab()
 cwd = pathlib.Path.cwd()
 
-if 1:
-    sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/test/py_check.py', '--image-size=[224,224]', '--model-def=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.py', '--model-weights=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.pth', 'resnext_101_32x4d', 'models/resnext_101_32x4d-pt-mcn.mat']
+# if 0:
+    # sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/test/py_check.py', '--image-size=[224,224]', '--model-def=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.py', '--model-weights=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.pth', 'resnext_101_32x4d', 'models/resnext_101_32x4d-pt-mcn.mat']
 
 
 parser = pl.set_conversion_kwargs()
@@ -109,6 +109,19 @@ def module_execution_order(module):
         submodules.append(PlaceHolder('{}-merge'.format(prefix), 'sum'))
         submodules.append(PlaceHolder('{}-relu'.format(prefix), 'relu'))
         modules.extend(submodules)
+    elif pl.has_lambda_child(module):
+        prefix = list(module.named_children())[0][0]
+        assert pl.is_lambda_reduce(children[1]), 'invalid map reduce pair'
+        submodules = []
+        map_blocks = list(children[0].children())
+        for map_block in map_blocks:
+            if not pl.is_plain_lambda(map_block):
+                submodules.extend(module_execution_order(map_block))
+        # TODO: generalise
+        submodules.append(PlaceHolder('{}-merge'.format(prefix), 'sum'))
+        if len(children) > 2: # apply operation to output of reduce
+            submodules.extend(children[2:])
+        modules.extend(submodules)
     else:
         for child in children:
             modules.extend(module_execution_order(child))
@@ -144,10 +157,11 @@ for py_idx, mcn_idx in pairs:
                       py_feat.shape, mcn_feat.shape))
     diff = np.absolute(py_feat - mcn_feat).mean()
     # TODO: fix properly 
-    if py_idx < 100:
-        tol = 1e-2
-    else:
-        tol = 5e-1
+    tol = 1e-4
+    # if py_idx < 100:
+        # tol = 1e-2
+    # else:
+        # tol = 5e-1
 
     if diff > tol: # allow a huge margin
         print('warning: differing output values!')

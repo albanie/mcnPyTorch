@@ -25,7 +25,8 @@ from collections import OrderedDict
 # --------------------------------------------------------------------
 
 def set_conversion_kwargs():
-    """parser for shared keyword arguments"""
+    """configure parser for shared keyword arguments
+    """
     parser = argparse.ArgumentParser(
 	    description='Convert model from PyTorch to MatConvNet.')
     parser.add_argument('pytorch_model',
@@ -108,8 +109,7 @@ def rowcell(x):
     return np.array(x,dtype=object).reshape(1,-1)
 
 def tolist(x):
-    """
-    Convert x to a Python list. x can be a Torch size tensor, a list, tuple 
+    """Convert x to a Python list. x can be a Torch size tensor, a list, tuple 
     or scalar
     """
     if isinstance(x, torch.Size):
@@ -120,8 +120,7 @@ def tolist(x):
       return [x]
 
 def pt_tensor_to_array(tensor):
-    """
-    Convert a PyTorch Tensor to a numpy array.
+    """Convert a PyTorch Tensor to a numpy array.
 
     (changes the order of dimensions to [width, height, channels, instance])
     """
@@ -145,9 +144,11 @@ def dictToMatlabStruct(d):
     return y
 
 class ImTransform(object):
-    """
-    resize (int): input dims
-    rgb ((int,int,int)): average RGB of the dataset (104,117,123)
+    """Create image transformation 
+    
+    Args:
+        resize (int): input dims
+        rgb ((int,int,int)): average RGB values of the dataset
     """
     def __init__(self, imsz, rgb, swap=(2, 0, 1)):
         self.mean_im = rgb
@@ -165,7 +166,8 @@ class ImTransform(object):
 # --------------------------------------------------------------------
 
 class CanonicalNet(nn.Module):
-
+    """
+    """
 
     def __init__(self, features, classifier, flatten_loc):
         super().__init__()
@@ -190,34 +192,27 @@ def canonical_net(net, name, flatten_loc='classifier'):
     """
     restructure models to be consistent for easier processing
     """
-    if isinstance(net, torchvision.models.resnet.ResNet):
+    is_resnet = isinstance(net, torchvision.models.resnet.ResNet)
+    is_resnext = name in ['resnext_50_32x4d', 
+                          'resnext_101_32x4d', 
+                          'resnext_101_64x4d']
+    if is_resnet:
         feats_srcs = ['conv1', 'bn1', 'relu', 'maxpool', 'layer1',
                      'layer2', 'layer3', 'layer4', 'avgpool']
         feat_layers = [getattr(net, attr) for attr in feats_srcs]
-        net.features = torch.nn.modules.Sequential(*feat_layers)
-        net.classifier = torch.nn.modules.Sequential(net.fc)
-        for attr in feats_srcs: delattr(net, attr) # prune
-        delattr(net, 'fc')
-
-        def forward(x):
-            # TODO(sam): explain the logic
-            x = net.features(x)
-            x = x.view(x.size(0), -1)
-            return net.classifier(x)
-
-        net.forward = forward
-    elif name in ['resnext_50_32x4d', 'resnext_101_32x4d']:
+        features = torch.nn.modules.Sequential(*feat_layers)
+        classifier = torch.nn.modules.Sequential(net.fc)
+    elif is_resnext:
         children = list(net.children())  
         feat_layers = copy.deepcopy(children[:-2])
         tail = copy.deepcopy(net)
-        while not isinstance(tail, torch.nn.modules.linear.Linear):
+        while not isinstance(tail, nn.modules.linear.Linear):
             tail = list(tail.children())[-1]
         classifier = torch.nn.modules.Sequential(tail)
         features = torch.nn.modules.Sequential(*feat_layers)
-        net = CanonicalNet(features, classifier, flatten_loc)
     else:
         raise ValueError('{} unrecognised torchvision model'.format(name))
-    return net
+    return CanonicalNet(features, classifier, flatten_loc)
 
 
 
@@ -267,6 +262,10 @@ def load_pytorch_model(name, paths=None):
         net = canonical_net(net, name, flatten_loc=flatten_loc)
     elif name == 'resnext_101_32x4d':
         net = model_def.resnext_101_32x4d 
+        net.load_state_dict(torch.load(paths['weights']))
+        net = canonical_net(net, name, flatten_loc=flatten_loc)
+    elif name == 'resnext_101_64x4d':
+        net = model_def.resnext_101_64x4d 
         net.load_state_dict(torch.load(paths['weights']))
         net = canonical_net(net, name, flatten_loc=flatten_loc)
     else:
@@ -373,6 +372,12 @@ def is_lambda_reduce(mod):
     torch -> pytorch converter
     """
     return 'LambdaReduce' in mod.__repr__().split('\n')[0]
+
+def is_plain_lambda(mod):
+    """check for the presence of the LambdReduce block used by the
+    torch -> pytorch converter
+    """
+    return 'Lambda ' in mod.__repr__().split('\n')[0]
 
 def get_feats(net, x, feats=[]):
    children = list(net.children())
@@ -650,7 +655,14 @@ class PTBatchNorm(PTLayer):
         beta = pt_tensor_to_array(all_params['{}_bias'.format(self.name)])
         mean = pt_tensor_to_array(all_params['{}_running_mean'.format(self.name)])
         var = pt_tensor_to_array(all_params['{}_running_var'.format(self.name)])
-        sigma = np.sqrt(var)
+
+        # note: PyTorch uses a slightly different formula for batch norm than
+        # matconvnet at *test* time: 
+        # pytorch:
+        #    y = ( x - mean(x)) / (sqrt(var(x)) + eps) * gamma + beta
+        # mcn:
+        #    y = ( x - mean(x)) / sqrt(var(x)) * gamma + beta
+        sigma = np.sqrt(var + self.eps)
         moments = np.vstack((mean, sigma)).T
         tensors = [gamma, beta, moments]
         for ii, tensor in enumerate(tensors):

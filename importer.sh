@@ -1,6 +1,6 @@
 import_dir="models"
-refresh_models=false
-test_imported_models=true # (requires matlab.engine)
+refresh_models=true
+test_imported_models=false # (requires matlab.engine)
 
 pushd `dirname $0` > /dev/null
 SCRIPTPATH=`pwd`
@@ -42,11 +42,12 @@ function convert_model()
                        #"squeezenet1_0" "squeezenet1_1")
 #declare -a model_list=("resnet152")
 #declare -a model_list=("vgg16")
-#model_def="${HOME}/.torch/models/resnext_101_32x4d.py"
-#weights="${HOME}/.torch/models/resnext_101_32x4d.pth"
-declare -a model_list=("resnext_50_32x4d")
-model_def="${HOME}/.torch/models/resnext_50_32x4d.py"
-weights="${HOME}/.torch/models/resnext_50_32x4d.pth"
+declare -a model_list=("resnext_101_32x4d")
+model_def="${HOME}/.torch/models/resnext_101_32x4d.py"
+weights="${HOME}/.torch/models/resnext_101_32x4d.pth"
+#declare -a model_list=("resnext_50_32x4d")
+#model_def="${HOME}/.torch/models/resnext_50_32x4d.py"
+#weights="${HOME}/.torch/models/resnext_50_32x4d.pth"
 #declare -a model_list=("resnext_101_64x4d")
 #model_def="${HOME}/.torch/models/resnext_101_64x4d.py"
 #weights="${HOME}/.torch/models/resnext_101_64x4d.pth"

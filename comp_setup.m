@@ -2,14 +2,15 @@ ref = load('~/data/models/matconvnet/imagenet-matconvnet-alex.mat') ;
 labels = ref.meta.classes.description ;
 
 %model = 'vgg11-mcn.mat' ;
-model = 'alexnet-mcn.mat' ;
+%model = 'alexnet-mcn.mat' ;
+model = 'resnet18-pt-mcn.mat' ;
 modelDir = fullfile(vl_rootnn, 'contrib/mcnPyTorch/models') ;
 net = load(fullfile(modelDir, model)) ;
 
 dag = dagnn.DagNN.loadobj(net) ;
 dag.addLayer('softmax', dagnn.SoftMax(), dag.layers(end).outputs, 'prob', {}) ;
 
-im = single(imresize(imread('peppers.png'), [227 227])) ;
+im = single(imresize(imread('peppers.png'), [224 224])) ;
 im_ = im_ / 255 ;
 
 imMean = [0.485 0.456 0.406] ;

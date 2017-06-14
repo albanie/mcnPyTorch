@@ -7,6 +7,7 @@ else
   dzdy = [] ;
 end
 
+opts.epsilon = 1e-4 ;
 opts.moments = [] ;
 opts = vl_argparse(opts, varargin) ;
 
@@ -17,10 +18,11 @@ epsilon = 1e-4 ;
 if isempty(opts.moments)
   mu = chanAvg(x) ;
   sigma2 = chanAvg(bsxfun(@minus, x, mu).^ 2) ;
-  sigma = sqrt(sigma2 + epsilon) ;
+  sigma = sqrt(sigma2 + opts.epsilon) ;
+  keyboard
 else
   mu = permute(opts.moments(:,1), [3 2 1]) ;
-  sigma = permute(opts.moments(:,2), [3 2 1]) ;
+  sigma = permute(opts.moments(:,2), [3 2 1]) ; % pytorch style
 end
 
 % normalize
@@ -29,10 +31,10 @@ x_hat = bsxfun(@rdivide, bsxfun(@minus, x, mu), sigma) ;
 if isempty(dzdy)
 
 	% apply gain
-	res = bsxfun(@times, permute(g, [3 1 2]), x_hat) ;
+	res = bsxfun(@times, permute(g, [3 2 1]), x_hat) ;
 
 	% add bias
-	y = bsxfun(@plus, res, permute(b, [3 1 2])) ;
+	y = bsxfun(@plus, res, permute(b, [3 2 1])) ;
 
 else
   % precompute some common terms 

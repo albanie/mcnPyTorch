@@ -4,7 +4,7 @@ import scipy.io
 from torch import autograd
 from torch.autograd import Variable
 
-eps = 1e-4
+eps = 1e-5
 
 model = 'resnext_101_64x4d'
 d = scipy.io.loadmat('../{}-cat.mat'.format(model))
@@ -26,7 +26,7 @@ channels = 1024
 sigma = 1.1
 var_scale = sigma**2 ;
 #x = autograd.Variable(torch.ones([1,channels,height,width]) * 0.5)
-m = nn.BatchNorm2d(channels, affine=True, eps=eps)
+m = nn.BatchNorm2d(channels, affine=False, eps=eps)
 
 def prep(x):
     x = torch.Tensor(x)
