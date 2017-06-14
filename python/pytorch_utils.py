@@ -3,13 +3,85 @@
 #
 # author: Samuel Albanie
 
+import os
 import cv2
 import math
 import ipdb
+import sys
+import inspect
+import argparse
+import importlib
+import pathlib
+import copy
 import torch
+from torch import nn
+from torch import autograd
 import torchvision
 import numpy as np
 from collections import OrderedDict
+
+# --------------------------------------------------------------------
+#                                                     Helpers Functions
+# --------------------------------------------------------------------
+
+def set_conversion_kwargs():
+    """configure parser for shared keyword arguments
+    """
+    parser = argparse.ArgumentParser(
+	    description='Convert model from PyTorch to MatConvNet.')
+    parser.add_argument('pytorch_model',
+			type=str,
+			help='The input should be the name of a pytorch model \
+			  (if present in pytorch.visionmodels), otherwise it \
+			  should be a path to its .pth file')
+    parser.add_argument('mcn_model',
+			type=str,
+			help='Output MATLAB file')
+    parser.add_argument('--image-size',
+                        type=str,
+                        nargs='?',
+                        default='[224,224]',
+                        help='Size of the input image')
+    parser.add_argument('--full-image-size',
+                        type=str,
+                        nargs='?',
+                        default='[256,256]',
+                        help='Size of the full image (from which crops are taken)')
+    parser.add_argument('--average-image',
+                        type=argparse.FileType('rb'),
+                        nargs='?',
+                        help='Average image')
+    parser.add_argument('--average-value',
+                        type=str,
+                        nargs='?',
+                        default=None,
+                        help='Average image value')
+    parser.add_argument('--remove-dropout',
+                        dest='remove_dropout',
+                        action='store_true',
+                        help='Remove dropout layers')
+    parser.add_argument('--remove-loss',
+                        dest='remove_loss',
+                        action='store_true',
+                        help='Remove loss layers')
+    parser.add_argument('--model-def',
+                        type=str,
+                        nargs='?',
+                        default=None,
+                        help='path to the model definition (a `.py` file)')
+    parser.add_argument('--model-weights',
+                        type=str,
+                        nargs='?',
+                        default=None,
+                        help='path to the model weights ( a `.pth` file)')
+    parser.add_argument('--append-softmax',
+                        dest='append_softmax',
+                        action='append',
+                        default=[],
+                        help='Add a softmax layer after the specified layer')
+    parser.set_defaults(remove_dropout=False)
+    parser.set_defaults(remove_loss=False)
+    return parser
 
 # --------------------------------------------------------------------
 #                                                     Helpers Functions
@@ -37,8 +109,7 @@ def rowcell(x):
     return np.array(x,dtype=object).reshape(1,-1)
 
 def tolist(x):
-    """
-    Convert x to a Python list. x can be a Torch size tensor, a list, tuple 
+    """Convert x to a Python list. x can be a Torch size tensor, a list, tuple 
     or scalar
     """
     if isinstance(x, torch.Size):
@@ -49,8 +120,7 @@ def tolist(x):
       return [x]
 
 def pt_tensor_to_array(tensor):
-    """
-    Convert a PyTorch Tensor to a numpy array.
+    """Convert a PyTorch Tensor to a numpy array.
 
     (changes the order of dimensions to [width, height, channels, instance])
     """
@@ -74,9 +144,11 @@ def dictToMatlabStruct(d):
     return y
 
 class ImTransform(object):
-    """
-    resize (int): input dims
-    rgb ((int,int,int)): average RGB of the dataset (104,117,123)
+    """Create image transformation 
+    
+    Args:
+        resize (int): input dims
+        rgb ((int,int,int)): average RGB values of the dataset
     """
     def __init__(self, imsz, rgb, swap=(2, 0, 1)):
         self.mean_im = rgb
@@ -93,36 +165,64 @@ class ImTransform(object):
 #                                                               Models
 # --------------------------------------------------------------------
 
+class CanonicalNet(nn.Module):
+    """
+    """
 
-def canonical_net(net, name):
+    def __init__(self, features, classifier, flatten_loc):
+        super().__init__()
+        self.features = features
+        self.classifier = classifier
+        self.flatten_loc = flatten_loc
+
+    def forward(self, x):
+        x = self.features(x)
+        if self.flatten_loc == 'classifier':
+            x = x.view(x.size(0), -1)
+            x = self.classifier(x)
+        elif self.flatten_loc == 'end':
+            x = self.classifier(x)
+            x = x.view(x.size(0), -1)
+        else:
+            msg = 'unrecognised flatten_loc: {}'.format(self.flatten_loc)
+            raise ValueError(msg)
+        return x
+
+def canonical_net(net, name, flatten_loc='classifier'):
     """
     restructure models to be consistent for easier processing
     """
-    if name == 'resnet18':
+    is_resnet = isinstance(net, torchvision.models.resnet.ResNet)
+    is_resnext = name in ['resnext_50_32x4d', 
+                          'resnext_101_32x4d', 
+                          'resnext_101_64x4d']
+    if is_resnet:
         feats_srcs = ['conv1', 'bn1', 'relu', 'maxpool', 'layer1',
                      'layer2', 'layer3', 'layer4', 'avgpool']
         feat_layers = [getattr(net, attr) for attr in feats_srcs]
-        net.features = torch.nn.modules.Sequential(*feat_layers)
-        net.classifier = torch.nn.modules.Sequential(net.fc)
-        for attr in feats_srcs: delattr(net, attr) # prune
-        delattr(net, 'fc')
-
-        def forward(x):
-            # TODO(sam): explain the logic
-            x = net.features(x)
-            x = x.view(x.size(0), -1)
-            x = net.classifier(x)
-            return x
-
-        net.forward = forward
+        features = torch.nn.modules.Sequential(*feat_layers)
+        classifier = torch.nn.modules.Sequential(net.fc)
+    elif is_resnext:
+        children = list(net.children())  
+        feat_layers = copy.deepcopy(children[:-2])
+        tail = copy.deepcopy(net)
+        while not isinstance(tail, nn.modules.linear.Linear):
+            tail = list(tail.children())[-1]
+        classifier = torch.nn.modules.Sequential(tail)
+        features = torch.nn.modules.Sequential(*feat_layers)
     else:
         raise ValueError('{} unrecognised torchvision model'.format(name))
-    return net
+    return CanonicalNet(features, classifier, flatten_loc)
 
 
 
-def load_valid_pytorch_model(name):
+def load_pytorch_model(name, paths=None):
     flatten_loc = 'classifier' # by default, flattening occurs before classifier
+    if paths: # load custom net params and defs
+        def_path = pathlib.Path(paths['def'])
+        sys.path.insert(0, str(def_path.parent))
+        model_def = importlib.import_module(str(def_path.stem))
+
     if name == 'alexnet':
         net = torchvision.models.alexnet(pretrained=True)
     elif name == 'vgg11':
@@ -144,8 +244,30 @@ def load_valid_pytorch_model(name):
     elif name == 'resnet18':
         net = torchvision.models.resnet18(pretrained=True)
         net = canonical_net(net, name)
+    elif name == 'resnet34':
+        net = torchvision.models.resnet34(pretrained=True)
+        net = canonical_net(net, name)
     elif name == 'resnet50':
         net = torchvision.models.resnet50(pretrained=True)
+        net = canonical_net(net, name)
+    elif name == 'resnet101':
+        net = torchvision.models.resnet101(pretrained=True)
+        net = canonical_net(net, name)
+    elif name == 'resnet152':
+        net = torchvision.models.resnet152(pretrained=True)
+        net = canonical_net(net, name)
+    elif name == 'resnext_50_32x4d':
+        net = model_def.resnext_50_32x4d 
+        net.load_state_dict(torch.load(paths['weights']))
+        net = canonical_net(net, name, flatten_loc=flatten_loc)
+    elif name == 'resnext_101_32x4d':
+        net = model_def.resnext_101_32x4d 
+        net.load_state_dict(torch.load(paths['weights']))
+        net = canonical_net(net, name, flatten_loc=flatten_loc)
+    elif name == 'resnext_101_64x4d':
+        net = model_def.resnext_101_64x4d 
+        net.load_state_dict(torch.load(paths['weights']))
+        net = canonical_net(net, name, flatten_loc=flatten_loc)
     else:
         raise ValueError('{} unrecognised torchvision model'.format(name))
     return net, flatten_loc
@@ -153,6 +275,20 @@ def load_valid_pytorch_model(name):
 # --------------------------------------------------------------------
 #                                                   Feature Extraction
 # --------------------------------------------------------------------
+
+class MapReducePair(object):
+    def __init__(self, map, reduce):
+        self.map = map
+        self.reduce = reduce
+
+    def children(self): return [] # maintain interface
+
+def in_place_replica(x):
+    """ Returns a deep copy of an autograd variable's data. 
+    A number of PyTorch operations are perfomed in-place, which 
+    makes  graph comparison non-trivial. This function enables the 
+    state of the variable to be stored before it is overwritten"""
+    return copy.deepcopy(autograd.Variable(x.data))
 
 def get_custom_feats(net, x):
     children = list(net.children())
@@ -171,35 +307,103 @@ def get_custom_feats(net, x):
         assert len(children) == 5 + bool(net.downsample), 'unexpected number of children'
         feats = []
         residual = x
-        out = net.conv1(x) ; feats.append(out)
-        out = net.bn1(out) ; feats.append(out)
-        out = net.relu(out) ; feats.append(out)
-        out = net.conv2(out) ; feats.append(out)
-        out = net.bn2(out) ; feats.append(out)
+        c1 = net.conv1(x) ; feats.append(c1)
+        bn1 = net.bn1(c1) ; feats.append(in_place_replica(bn1))
+        r1 = net.relu(bn1) ; feats.append(r1)
+        c2 = net.conv2(r1) ; feats.append(c2)
+        out = net.bn2(c2) ; feats.append(in_place_replica(out))
         if net.downsample: 
             projection = list(net.downsample.children())[0]
-            out = projection(residual) ; feats.append(out)
-            residual = net.downsample(residual) ; feats.append(residual)
-        out += residual ; feats.append(out)
+            proj = projection(residual) ; feats.append(in_place_replica(proj))
+            residual = net.downsample(residual) # apply sequence
+            feats.append(in_place_replica(residual))
+        out += residual ; feats.append(in_place_replica(out))
         out = net.relu(out) ; feats.append(out)
+    elif isinstance(net, torchvision.models.resnet.Bottleneck):
+        assert len(children) == 7 + bool(net.downsample), 'unexpected number of children'
+        feats = []
+        residual = x
+        c1 = net.conv1(x) ; feats.append(c1)
+        bn1 = net.bn1(c1) ; feats.append(in_place_replica(bn1))
+        r1 = net.relu(bn1) ; feats.append(r1)
+        c2 = net.conv2(r1) ; feats.append(c2)
+        bn2 = net.bn2(c2) ; feats.append(in_place_replica(bn2))
+        r2 = net.relu(bn2) ; feats.append(r2)
+        c3 = net.conv3(r2) ; feats.append(c3)
+        out = net.bn3(c3) ; feats.append(in_place_replica(out))
+        if net.downsample: 
+            projection = list(net.downsample.children())[0]
+            proj = projection(residual) ; feats.append(in_place_replica(proj))
+            residual = net.downsample(residual) # apply sequence
+            feats.append(in_place_replica(residual))
+        out += residual ; feats.append(in_place_replica(out))
+        out = net.relu(out) ; feats.append(out)
+    elif isinstance(net, MapReducePair):
+        _map, _reduce = net.map.lambda_func, net.reduce.lambda_func
+        if _map(1) != 1: raise ValueError('only identity map supported')
+        if _reduce(1,1) != 2: raise ValueError('only summation reduce supported')
+        feats = []
+        id_map = x
+        base = nn.Sequential(*net.map[0])
+        base_feats = get_feats(base, id_map, []) ; feats.extend(base_feats[1:])
+        if not hasattr(net.map[1], 'lambda_func'): # projection exists
+            projection = nn.Sequential(net.map[1])
+            proj = get_feats(projection, id_map, []) ; feats.extend(proj[1:])
+            id_map = proj[-1]
+        else:
+            assert net.map[1].lambda_func(1) == 1, 'non projection should be identity'
+        out = id_map + base_feats[-1] ; feats.append(out)
     else:
         raise ValueError('{} unrecognised custom module'.format(type(net)))
     return feats
+
+def has_lambda_child(module):
+    has_children = len(list(module.children())) > 0
+    return  has_children and is_lambda_map(list(module.children())[0])
+
+def is_lambda_map(mod):
+    """check for the presence of the LambdaMap block used by the
+    torch -> pytorch converter
+    """
+    return 'LambdaMap' in mod.__repr__().split('\n')[0]
+
+def is_lambda_reduce(mod):
+    """check for the presence of the LambdReduce block used by the
+    torch -> pytorch converter
+    """
+    return 'LambdaReduce' in mod.__repr__().split('\n')[0]
+
+def is_plain_lambda(mod):
+    """check for the presence of the LambdReduce block used by the
+    torch -> pytorch converter
+    """
+    return 'Lambda ' in mod.__repr__().split('\n')[0]
 
 def get_feats(net, x, feats=[]):
    children = list(net.children())
    if len(children) == 0:
        return [net(x)]
    head, tail = children[:-1], children[-1]
-   while isinstance(tail, torch.nn.Sequential):
-       children = list(tail.children())
-       head_, tail = children[:-1], children[-1]
-       head = head + head_ 
+
+   # handle chunking for models imported from torch (lua)
+   # use a string check hack to avoid adding a module import 
+   # path dependency
+   if is_lambda_reduce(tail):
+       assert is_lambda_map(head[-1]), 'invalid map reduce pair'
+       tail = MapReducePair(head[-1], tail)
+       head = head[:-1] # adjust head
+   else: # standard model structure
+       while isinstance(tail, torch.nn.Sequential): 
+           children = list(tail.children())
+           head_, tail = children[:-1], children[-1]
+           head = head + head_ 
+
    trunk = torch.nn.Sequential(*head)
    trunk_feats = get_feats(trunk, x, feats)
-   print(type(tail))
    if type(tail) in [torchvision.models.squeezenet.Fire, 
-                     torchvision.models.resnet.BasicBlock]:
+                     torchvision.models.resnet.BasicBlock, 
+                     torchvision.models.resnet.Bottleneck,
+                     MapReducePair]:
        tail_feats = get_custom_feats(tail, trunk_feats[-1])
    else:
        tail_feats = [net(x)]
@@ -217,7 +421,8 @@ def compute_intermediate_feats(net, x, flatten_loc):
         x = x.view(x.size(0), -1)
     else:
         raise ValueError('flatten_loc: {} not recognised'.format(flatten_loc))
-    offset = len(list(net.classifier.children())) > 0
+    #offset = len(list(net.classifier.children())) > 0
+    offset = len(cls_feats) > 2
     return feature_feats + cls_feats[offset:] # drop duplicate feature if needed
 
 # --------------------------------------------------------------------
@@ -411,7 +616,7 @@ class PTConv(PTLayer):
 
     def toMatlab(self):
         size = self.kernel_size + [self.filter_depth, self.num_output]
-        mlayer = super(PTConv, self).toMatlab()
+        mlayer = super().toMatlab()
         mlayer['type'][0] = u'dagnn.Conv'
         mlayer['block'][0] = dictToMatlabStruct(
             {'hasBias': self.bias_term,
@@ -427,69 +632,45 @@ class PTConv(PTLayer):
 
 class PTBatchNorm(PTLayer):
     def __init__(self, name, inputs, outputs, use_global_stats, 
-                                             moving_average_fraction, eps):
+                                             momentum, eps):
         super().__init__(name, inputs, outputs)
 
         self.use_global_stats = use_global_stats
-        self.moving_average_fraction = moving_average_fraction
+        self.momentum = momentum
         self.eps = eps
 
-        self.params = [name + u'_mean',
-                       name + u'_variance',
-                       name + u'_scale_factor']
+        self.params = [name + u'_mult',
+                       name + u'_bias',
+                       name + u'_moments']
 
     def display(self):
         super().display()
-        print("  c- use_global_stats: %s" % (self.use_global_stats,))
-        print("  c- moving_average_fraction: %s" % (self.moving_average_fraction,))
-        print("  c- eps: %s" % (self.eps))
+        print('  c- use_global_stats: %s'.format(self.use_global_stats,))
+        print('  c- momentum: %s'.format(self.momentum,))
+        print('  c- eps: %s'.format(self.eps))
 
     def setTensor(self, model, all_params):
-        #name_ = name.replace('_'
+        # Note: PyTorch stores variances rather than sigmas
         gamma = pt_tensor_to_array(all_params['{}_weight'.format(self.name)])
         beta = pt_tensor_to_array(all_params['{}_bias'.format(self.name)])
         mean = pt_tensor_to_array(all_params['{}_running_mean'.format(self.name)])
         var = pt_tensor_to_array(all_params['{}_running_var'.format(self.name)])
-        moments = np.vstack((mean, var)).T
+
+        # note: PyTorch uses a slightly different formula for batch norm than
+        # matconvnet at *test* time: 
+        # pytorch:
+        #    y = ( x - mean(x)) / (sqrt(var(x)) + eps) * gamma + beta
+        # mcn:
+        #    y = ( x - mean(x)) / sqrt(var(x)) * gamma + beta
+        sigma = np.sqrt(var + self.eps)
+        moments = np.vstack((mean, sigma)).T
         tensors = [gamma, beta, moments]
         for ii, tensor in enumerate(tensors):
             model.params[self.params[ii]].value = tensor
             model.params[self.params[ii]].shape = tensor.shape
 
-    def reshape(self, model):
-        shape = model.vars[self.inputs[0]].shape
-        mean = model.params[self.params[0]].value
-        variance = model.params[self.params[1]].value
-        scale_factor = model.params[self.params[2]].value
-        for i in range(3): del model.params[self.params[i]]
-        self.params = [self.name + u'_mult',
-                       self.name + u'_bias',
-                       self.name + u'_moments']
-
-        model.addParam(self.params[0])
-        model.addParam(self.params[1])
-        model.addParam(self.params[2])
-
-        if shape:
-            mult = np.ones((shape[2],),dtype='float32')
-            bias = np.zeros((shape[2],),dtype='float32')
-            model.params[self.params[0]].value = mult
-            model.params[self.params[0]].shape = mult.shape
-            model.params[self.params[1]].value = bias
-            model.params[self.params[1]].shape = bias.shape
-
-        if mean.size:
-            moments = np.concatenate(
-                (mean.reshape(-1,1) / scale_factor,
-                 np.sqrt(variance.reshape(-1,1) / scale_factor + self.eps)),
-                axis=1)
-            model.params[self.params[2]].value = moments
-            model.params[self.params[2]].shape = moments.shape
-
-        model.vars[self.outputs[0]].shape = shape
-
     def toMatlab(self):
-        mlayer = super(PTBatchNorm, self).toMatlab()
+        mlayer = super().toMatlab()
         mlayer['type'][0] = u'dagnn.BatchNorm'
         mlayer['block'][0] = dictToMatlabStruct(
             {'epsilon': self.eps})
@@ -568,6 +749,25 @@ class PTConcat(PTLayer):
         mlayer['block'][0] = dictToMatlabStruct({'dim': float(self.concatDim)})
         return mlayer
 
+
+class PTSum(PTElementWise):
+    def __init__(self, name, inputs, outputs,):
+        super().__init__(name, inputs, outputs)
+
+    def toMatlab(self):
+        mlayer = super().toMatlab()
+        mlayer['type'][0] = u'dagnn.Sum'
+        return mlayer
+
+    def setTensor(self, model, all_params):
+        pass
+
+    def display(self):
+        super().display()
+        print('  c- operation: ', self.operation)
+        print('  c- coeff: {}'.format(self.coeff))
+        print('  c- stable_prod_grad: {}'.format(self.stable_prod_grad))
+
 class PTDropout(PTElementWise):
     def __init__(self, name, inputs, outputs, ratio):
         super().__init__(name, inputs, outputs)
@@ -598,7 +798,7 @@ class PTFlatten(PTLayer):
         pass
 
     def toMatlab(self):
-        mlayer = super(PTFlatten, self).toMatlab()
+        mlayer = super().toMatlab()
         mlayer['type'][0] = u'dagnn.Flatten'
         mlayer['block'][0] = dictToMatlabStruct(
             {'axis': self.axis})
