@@ -31,7 +31,7 @@ import pytorch_utils as pl
 
 # set path for the feature dump and set sample image
 sample_im_path = 'test/peppers.png'
-feature_path = Path('/ramdisk/albanie/mcn-py/pyt-feats.mat')
+feature_path = Path('../../data/mcnPyTorch/pyt-feats.mat')
 if not feature_path.parent.exists(): feature_path.parent.mkdir()
 
 # parse args
@@ -57,7 +57,9 @@ py_feats_tensors = pl.compute_intermediate_feats(net.eval(), x, flatten_loc)
 
 # form dict for dumping
 feat_dump = {}
-for ii, feat in enumerate(py_feats_tensors): feat_dump[str(ii)] = feat
+for ii, feat in enumerate(py_feats_tensors): 
+    featKay = 'x{}'.format(ii)
+    feat_dump[featKay] = feat.data.numpy()
 
 # save to disk
 scipy.io.savemat(str(feature_path), feat_dump)

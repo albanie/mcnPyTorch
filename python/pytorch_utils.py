@@ -204,7 +204,7 @@ class CanonicalNet(nn.Module):
             raise ValueError(msg)
         return x
 
-def canonical_net(net, name, flatten_loc='classifier', remove_aux=False):
+def canonical_net(net, name, flatten_loc='classifier', remove_aux=True):
     """
     restructure models to be consistent for easier processing
     """
@@ -220,41 +220,43 @@ def canonical_net(net, name, flatten_loc='classifier', remove_aux=False):
         features = torch.nn.modules.Sequential(*feat_layers)
         classifier = torch.nn.modules.Sequential(net.fc)
     elif is_inception:
-        skeleton = skeletons.inception.Inception3(aux_logits=False)
-        skeleton.parameters = net.parameters
-        skeleton.input_space = net.input_space
-        skeleton.input_size = net.input_size
-        skeleton.std = net.std
-        skeleton.mean = net.mean
-
-        # resort to transferring from skeleton definition
-        # TODO transfer modules
+        # skeleton = skeletons.inception.Inception3(aux_logits=False)
+        skeleton = skeletons.inception.inception_v3(pretrained=True)
         children = list(skeleton.children())  
         tail = children[-1]
         feat_layers = copy.deepcopy(children[:-1])
 
-        # debug
-        model = skeleton 
-        path_img = '/users/albanie/coding/libs/pretrained-models.pytorch/data/cat.jpg'
-        with open(path_img, 'rb') as f:
-            with Image.open(f) as img:
-                input_data = img.convert(model.input_space)
+        # TODO: clean up
+        # skeleton.input_space = net.input_space
+        # skeleton.input_size = net.input_size
+        # skeleton.std = net.std
+        # skeleton.mean = net.mean
 
-        tf = transforms.Compose([
-            transforms.Scale(round(max(model.input_size)*1.143)),
-            transforms.CenterCrop(max(model.input_size)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=model.mean, std=model.std)
-        ])
+        # # resort to transferring from skeleton definition
+        # # TODO transfer modules
 
-        input_data = tf(input_data)          # 3x400x225 -> 3x299x299
-        input_data = input_data.unsqueeze(0) # 3x299x299 -> 1x3x299x299
-        input = torch.autograd.Variable(input_data)
-        output = model(input) # size(1, 1000)
+        # # debug
+        # model = skeleton 
+        # path_img = '/users/albanie/coding/libs/pretrained-models.pytorch/data/cat.jpg'
+        # with open(path_img, 'rb') as f:
+            # with Image.open(f) as img:
+                # input_data = img.convert(model.input_space)
+
+        # tf = transforms.Compose([
+            # transforms.Scale(round(max(model.input_size)*1.143)),
+            # transforms.CenterCrop(max(model.input_size)),
+            # transforms.ToTensor(),
+            # transforms.Normalize(mean=model.mean, std=model.std)
+        # ])
+
+        # input_data = tf(input_data)          # 3x400x225 -> 3x299x299
+        # input_data = input_data.unsqueeze(0) # 3x299x299 -> 1x3x299x299
+        # input = torch.autograd.Variable(input_data)
+        # output = model(input) # size(1, 1000)
 
         if remove_aux: # remove auxiliary classifiers if desired
             feat_layers = [l for l in feat_layers if not 
-                    isinstance(l, torchvision.models.inception.InceptionAux)]
+                    isinstance(l, skeletons.inception.InceptionAux)]
         classifier = torch.nn.modules.Sequential(tail)
         features = torch.nn.modules.Sequential(*feat_layers)
     elif is_resnext:
