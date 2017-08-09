@@ -1,5 +1,4 @@
-# importer.sh
-# Import pretrained pytorch models
+# Import the Inception v3 model 
 #
 # --------------------------------------------------------
 # mcnPyTorch
@@ -21,7 +20,7 @@ function convert_model()
     mcn_model_path=$2
     model_def=$3
     weights=$4
-	converter="ipython $SCRIPTPATH/python/import_pytorch.py --"
+	converter="ipython --pdb $SCRIPTPATH/../python/import_pytorch.py --"
 	mkdir -p "${import_dir}"
 
     if [ $refresh_models = false ] && [ -e $mcn_model_path ]
@@ -29,8 +28,8 @@ function convert_model()
 		echo "$mcn_model_path already exists; skipping."
 	else echo "Exporting PyTorch model to matconvnet (may take some time) ..." 
         $converter \
-                --image-size='[224,224]' \
-                --full-image-size='[256,256]' \
+                --image-size='[299,299]' \
+                --full-image-size='[299,299]' \
                 --model-def=$model_def \
                 --model-weights=$weights \
                 $pytorch_model $mcn_model_path
@@ -38,27 +37,15 @@ function convert_model()
 
     if [ $test_imported_models = true ]
     then 
-        tester="ipython $SCRIPTPATH/test/py_check.py --"
+        tester="ipython $SCRIPTPATH/../test/dump_pytorch_features.py --"
         $tester \
-                --image-size='[224,224]' \
+                --image-size='[299,299]' \
                 --model-def=$model_def \
                 --model-weights=$weights \
                 $pytorch_model $mcn_model_path
     fi
 }
 	
-# Example models from the torchvision module
-declare -a model_list=("alexnet" "vgg11" "vgg13" "vgg16" "vgg19" \ 
-                       "squeezenet1_0" "squeezenet1_1" "resnet152" )
 
-# alternatively, specify a custom model (will require modifications to 
-# the python source to add support for unrecognised layers)
-declare -a model_list=("resnext_101_32x4d")
-model_def="${HOME}/.torch/models/resnext_101_32x4d.py"
-weights="${HOME}/.torch/models/resnext_101_32x4d.pth"
-
-for pytorch_model in "${model_list[@]}"
-do
-    mcn_model_path="${import_dir}/${pytorch_model}-pt-mcn.mat"
-    convert_model $pytorch_model $mcn_model_path $model_def $weights
-done
+mcn_model_path="${import_dir}/inception_v3-pt-mcn.mat"
+convert_model "inception_v3" $mcn_model_path

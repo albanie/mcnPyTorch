@@ -1,5 +1,7 @@
 *__pycache__
 *.mat
 models/
+local_setup.sh
 models
 sync_models.sh
+transfer_models.sh
