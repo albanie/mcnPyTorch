@@ -1,3 +1,14 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*- 
+# 
+# pytorch model importer
+
+# --------------------------------------------------------
+# mcnPyTorch
+# Licensed under The MIT License [see LICENSE.md for details]
+# Copyright (C) 2017 Samuel Albanie 
+# --------------------------------------------------------
+
 import os
 import sys
 import copy
@@ -5,8 +16,8 @@ import ipdb
 import torch
 import argparse
 import scipy.io
+import numpy as np
 import torchvision
-from collections import OrderedDict
 import pytorch_utils as pl
 import skeletons
 from torch import nn
@@ -18,34 +29,22 @@ from ast import literal_eval as make_tuple
 
 # parse args
 parser = pl.set_conversion_kwargs()
-args = parser.parse_args(sys.argv[1:])
+args_ = parser.parse_args(sys.argv[1:])
 
 # load model
-if args.model_def and args.model_weights:
-    model_paths = {'def': args.model_def, 'weights': args.model_weights}
+if args_.model_def and args_.model_weights:
+    paths = {'def': args_.model_def, 'weights': args_.model_weights}
 else:
-    model_paths = None
+    paths = None
 
-# forward pass to compute pytorch feature sizes
-im = scipy.misc.face()
-im = scipy.misc.imresize(im, args.image_size)
-
-if debug:
-    plt.imshow(im) 
-    zs_dispFig()
-
-# model_dir = Path('/users/albanie/coding/libs/convert_torch_to_pytorch/models')
-# vgg = model_dir / 'vgg16-397923af.pth'
-
-# params = torch.load(str(vgg))
-net,flatten_loc = pl.load_pytorch_model(args.pytorch_model, paths=model_paths)
+net,flatten_loc = pl.load_pytorch_model(args_.pytorch_model, paths=paths)
 params = net.state_dict()
 
 # forward pass to compute pytorch feature sizes
-args.image_size = tuple(make_tuple(args.image_size))
-args.full_image_size = tuple(make_tuple(args.full_image_size))
-im = scipy.misc.imresize(scipy.misc.face(), args.image_size)
-transform = pl.ImTransform(args.image_size, (104, 117, 123), (2, 0, 1))
+args_.image_size = tuple(make_tuple(args_.image_size))
+args_.full_image_size = tuple(make_tuple(args_.full_image_size))
+im = scipy.misc.imresize(scipy.misc.face(), args_.image_size)
+transform = pl.ImTransform(args_.image_size, (104, 117, 123), (2, 0, 1))
 x = Variable(transform(im).unsqueeze(0))
 feats = pl.compute_intermediate_feats(net.eval(), x, flatten_loc)
 sizes = [pl.tolist(feat.size()) for feat in feats] 
@@ -364,7 +363,7 @@ def construct_layers(graph, state):
             state = update_size_info(name, 'ReLU', state)
 
         elif isinstance(module, nn.modules.dropout.Dropout):
-            if not args.remove_dropout:
+            if not args_.remove_dropout:
                 opts['ratio'] = module.p # TODO: check that this shouldn't be 1 - p
                 layers.append(pl.PTDropout(*pargs, **opts))
             else:
@@ -472,9 +471,9 @@ average_image = np.array((0.485, 0.456, 0.406),dtype='float')
 image_std = np.array((0.229, 0.224, 0.225), dtype='float') 
 
 minputs = np.empty(shape=[0,], dtype=pl.minputdt)
-dataShape = args.image_size
+dataShape = args_.image_size
 print('Input image data tensor shape:', dataShape)
-print('Full input image size:', args.full_image_size)
+print('Full input image size:', args_.full_image_size)
 
 mnormalization = {
   'imageSize': pl.row(dataShape),
@@ -485,8 +484,8 @@ mnormalization = {
   'border': pl.row([0,0]),
   'cropSize': 1.0}
 
-fw = max(args.full_image_size[0], dataShape[1])
-fh = max(args.full_image_size[0], dataShape[0])
+fw = max(args_.full_image_size[0], dataShape[1])
+fh = max(args_.full_image_size[0], dataShape[0])
 mnormalization['border'] = max([float(fw - dataShape[1]),
                   float(fh - dataShape[0])])
 mnormalization['cropSize'] = min([float(dataShape[1]) / fw,
@@ -520,5 +519,5 @@ mnet['params'] = mnet['params'].reshape(1,-1)
 #                                                  Save converted model
 # --------------------------------------------------------------------
 
-print('Saving network to {}'.format(args.mcn_model))
-scipy.io.savemat(args.mcn_model, mnet, oned_as='column')
+print('Saving network to {}'.format(args_.mcn_model))
+scipy.io.savemat(args_.mcn_model, mnet, oned_as='column')

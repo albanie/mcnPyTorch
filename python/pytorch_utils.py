@@ -1,7 +1,11 @@
 # Layers and helper methods for pytorch model conversion
 # based on Andrea Vedaldi's caffe-importer scripts
 #
-# author: Samuel Albanie
+# --------------------------------------------------------
+# mcnPyTorch
+# Licensed under The MIT License [see LICENSE.md for details]
+# Copyright (C) 2017 Samuel Albanie 
+# --------------------------------------------------------
 
 import os
 import cv2
