@@ -9,7 +9,7 @@ classdef Permute < dagnn.ElementWise
     end
 
     function [derInputs, derParams] = backward(obj, inputs, params, derOutputs)
-      derInputs{1} = permute(derOutputs{1}, obj.order) ;
+      derInputs{1} = ipermute(derOutputs{1}, obj.order) ;
       derParams = {} ;
     end
 

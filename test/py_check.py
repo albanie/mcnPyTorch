@@ -1,16 +1,6 @@
+import ipdb
 import sys, os
 sys.path.insert(0, '../python') 
-
-import ipdb
-debug = 0
-
-if debug:
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    path = os.path.expanduser('~/coding/src/zsvision/python')
-    sys.path.insert(0, path) # lazy
-    from zsvision.zs_iterm import zs_dispFig
 
 import torch
 import argparse
@@ -22,31 +12,27 @@ from ast import literal_eval as make_tuple
 import pathlib
 from torch.autograd import Variable
 import torchvision.transforms as transforms
+import pytorch_utils as pl
 
-if 1:
+if 1: # TODO(sam): cleanup
     sys.path.insert(0, os.path.expanduser('~/local/matlab-engine/lib'))
     sys.path.insert(0, 'python')
-
-import pytorch_utils as pl
 
 # compare against matconvnet
 import matlab.engine
 eng = matlab.engine.start_matlab()
 cwd = pathlib.Path.cwd()
 
-# if 0:
-    # sys.argv = ['/Users/samuelalbanie/coding/libs/matconvnets/contrib-matconvnet/contrib/mcnPyTorch/test/py_check.py', '--image-size=[224,224]', '--model-def=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.py', '--model-weights=/Users/samuelalbanie/.torch/models/resnext_101_32x4d.pth', 'resnext_101_32x4d', 'models/resnext_101_32x4d-pt-mcn.mat']
-
-
+# parse args
 parser = pl.set_conversion_kwargs()
-args = parser.parse_args(sys.argv[1:]) # allows for shared parsing
+args = parser.parse_args(sys.argv[1:])
 
+# load pytorch model
 if args.model_def and args.model_weights:
     model_paths = {'def': args.model_def, 'weights': args.model_weights}
-
 net,flatten_loc = pl.load_pytorch_model(args.pytorch_model, paths=model_paths)
 
-# generate image and convert to var
+# compute activations for a sample image
 im_orig = Image.open(str(cwd / 'test/peppers.png')).convert('RGB')
 image_size = tuple(make_tuple(args.image_size))
 im = np.array(im_orig.resize(image_size))
@@ -54,7 +40,6 @@ normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                   std=[0.229, 0.224, 0.225])
 transform = transforms.Compose([transforms.ToTensor(),normalize])
 x = Variable(transform(im).unsqueeze(0))
-
 py_feats_tensors = pl.compute_intermediate_feats(net.eval(), x, flatten_loc)
 
 # create image to pass to MATLAB and compute the feature maps
@@ -137,35 +122,28 @@ def get_feature_pairs(net):
     pairs = [] 
     cursor = 0
     for py_idx in py_feat_idx:
-        #if py_idx == len(feat_modules)+ 1:
         if py_idx == len(feat_modules):
             cursor += 1 # mcn flattening procedure uses an extra layer
         if py_idx in dropout_idx and args.remove_dropout:
             print('drop zone')
             continue
-        if debug: print(py_idx, cursor)
+        print(py_idx, cursor)
         pairs.append([py_idx, cursor])
         cursor += 1
     return pairs
 
+# compare activations
 pairs = get_feature_pairs(net)
-
 for py_idx, mcn_idx in pairs:
     py_feat = py_feats[py_idx]
     mcn_feat = mcn_feats[mcn_idx]
     print('{}v{}: size py: {} vs size mcn: {}'.format(py_idx,mcn_idx,
                       py_feat.shape, mcn_feat.shape))
     diff = np.absolute(py_feat - mcn_feat).mean()
-    # TODO: fix properly 
     tol = 1e-4
-    # if py_idx < 100:
-        # tol = 1e-2
-    # else:
-        # tol = 5e-1
-
     if diff > tol: # allow a huge margin
         print('warning: differing output values!')
         print('diff: {}'.format(diff))
         print('py mean: {}'.format(py_feat.mean()))
         print('mcn mean: {}'.format(mcn_feat.mean()))
-        #raise ValueError('numerical checks failed')
+        #raise ValueError('numerical checks failed') # TODO: fix properly
