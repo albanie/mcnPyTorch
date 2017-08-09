@@ -7,6 +7,7 @@ import scipy.io
 import torchvision
 from collections import OrderedDict
 import pytorch_utils as pl
+import skeletons
 from torch import nn
 from torch.autograd import Variable
 from ast import literal_eval as make_tuple
@@ -44,6 +45,8 @@ args.full_image_size = tuple(make_tuple(args.full_image_size))
 
 if args.model_def and args.model_weights:
     model_paths = {'def': args.model_def, 'weights': args.model_weights}
+else:
+    model_paths = None
 
 # forward pass to compute pytorch feature sizes
 im = scipy.misc.face()
@@ -79,18 +82,24 @@ for key in params:
     tmp[new_name] = params[key]
 params = tmp 
 
+def insert_cat_layer(name, inputs, state, dim=3):
+    cat_name = '{}_cat'.format(name)
+    cat_layer = pl.PTConcat(cat_name, inputs, [cat_name], dim)
+    state = update_size_info(name, 'mcn-cat', state)
+    state['out_vars'] = cat_layer.outputs
+    return cat_layer, state
+
 def process_custom_module(name, module, state):
     layers = []
+    children = list(module.named_children())
     if isinstance(module, torchvision.models.resnet.Bottleneck):
         id_var = state['in_vars']
         downsample = hasattr(module, 'downsample') and bool(module.downsample)
-        children = list(module.named_children())
         assert len(children) == 7 + downsample, 'unexpected bottleneck size'
         state['prefix'] = name
-
-        # insert repeated ReLU
-        relu_ = children[6]
-        assert isinstance(children[6][1], nn.modules.activation.ReLU), 'unusual relu location'
+        relu_ = children[6] # insert repeated ReLU
+        warning = 'unusual relu location'
+        assert isinstance(children[6][1], nn.modules.activation.ReLU), warning
         children.insert(4, ('relu2', relu_[1]))
         children.insert(2, ('relu1', relu_[1]))
         block, state = construct_layers(children[:8], state)
@@ -104,9 +113,8 @@ def process_custom_module(name, module, state):
             state['in_vars'] = prev
             id_var = down_block[-1].outputs
 
-
-        merge_name = '{}_merge'.format(name)
-        merge_layer = pl.PTSum(merge_name, [*id_var, *state['in_vars']], [merge_name])
+        merge_name = '{}_merge'.format(name) ; ins = [*id_var, *state['in_vars']]
+        merge_layer = pl.PTSum(merge_name, ins, [merge_name])
         state = update_size_info(name, 'mcn-sum', state)
         layers.append(merge_layer)
         state['in_vars'] = merge_layer.outputs
@@ -121,10 +129,8 @@ def process_custom_module(name, module, state):
     elif isinstance(module, torchvision.models.resnet.BasicBlock):
         id_var = state['in_vars']
         downsample = hasattr(module, 'downsample') and bool(module.downsample)
-        children = list(module.named_children())
         assert len(children) == 5 + downsample, 'unexpected bottleneck size'
         state['prefix'] = name
-
         block, state = construct_layers(children[:5], state)
         layers.extend(block)
         state['in_vars'] = block[-1].outputs
@@ -137,8 +143,8 @@ def process_custom_module(name, module, state):
             state['in_vars'] = prev
             id_var = down_block[-1].outputs
 
-        merge_name = '{}_merge'.format(name)
-        merge_layer = pl.PTSum(merge_name, [*id_var, *state['in_vars']], [merge_name])
+        merge_name = '{}_merge'.format(name) ; ins = [*id_var, *state['in_vars']]
+        merge_layer = pl.PTSum(merge_name, ins, [merge_name])
         state = update_size_info(name, 'mcn-sum', state)
         layers.append(merge_layer)
         state['in_vars'] = merge_layer.outputs
@@ -152,25 +158,116 @@ def process_custom_module(name, module, state):
 
     elif isinstance(module, torchvision.models.squeezenet.Fire):
         state['prefix'] = name # process squeeze block first
-        children = list(module.named_children())
         assert len(children) == 6 , 'unexpected fire size'
         squeeze_block,_ = construct_layers(children[:2], state)
         layers.extend(squeeze_block)
         expand1x1,_ = construct_layers(children[2:4], state) # expand 1x1
-        layers.extend(expand1x1)
-        out1 = expand1x1[-1].outputs
         state['in_vars'] = squeeze_block[-1].outputs
         expand3x3,_ = construct_layers(children[4:], state) # expand 3x3
-        layers.extend(expand3x3)
-        out3 = expand3x3[-1].outputs
-        cat_name = '{}_cat'.format(name)
-        cat_layer = pl.PTConcat(cat_name, [*out1, *out3], [cat_name], 3)
-        state = update_size_info(name, 'mcn-cat', state)
+        layers.extend(expand1x1 + expand3x3)
+        tails = [x[-1].outputs[0] for x in [expand1x1, expand3x3]]
+        cat_layer, state = insert_cat_layer(name, tails, state)
         layers.append(cat_layer)
-        state['out_vars'] = cat_layer.outputs
+
+    elif isinstance(module, skeletons.inception.BasicConv2d):
+        state['prefix'] = name 
+        assert len(children) == 3 , 'unexpected BasicConv2d size'
+        basic_block,_ = construct_layers(children, state)
+        layers.extend(basic_block)
+
+    elif isinstance(module, skeletons.inception.InceptionA):
+        assert len(children) == 8 , 'unexpected InceptionA size'
+        in_var = state['in_vars']
+        state['prefix'] = name 
+        b1x1,_ = construct_layers(children[:1], state)
+        state['in_vars'] = in_var
+        b5x5,_ = construct_layers(children[1:3], state)
+        state['in_vars'] = in_var
+        b3x3dbl,_ = construct_layers(children[3:6], state)
+        state['in_vars'] = in_var
+        pool,_ = construct_layers(children[6:], state)
+        tails = [x[-1].outputs[0] for x in [b1x1, b5x5, b3x3dbl, pool]]
+        cat_layer, state = insert_cat_layer(name, tails, state)
+        layers.extend(b1x1 + b5x5 + b3x3dbl + pool + [cat_layer])
+
+    elif isinstance(module, skeletons.inception.InceptionB):
+        assert len(children) == 5 , 'unexpected InceptionB size'
+        in_var = state['in_vars']
+        state['prefix'] = name 
+        b3x3,_ = construct_layers(children[:1], state)
+        state['in_vars'] = in_var
+        b3x3dbl,_ = construct_layers(children[1:4], state)
+        state['in_vars'] = in_var
+        pool,_ = construct_layers([children[4]], state)
+        tails = [x[-1].outputs[0] for x in [b3x3, b3x3dbl, pool]]
+        cat_layer, state = insert_cat_layer(name, tails, state)
+        layers.extend(b3x3 + b3x3dbl + pool + [cat_layer])
+
+    elif isinstance(module, skeletons.inception.InceptionC):
+        assert len(children) == 11 , 'unexpected InceptionC size'
+        in_var = state['in_vars']
+        state['prefix'] = name 
+        b1x1,_ = construct_layers(children[:1], state)
+        state['in_vars'] = in_var
+        b7x7,_ = construct_layers(children[1:4], state)
+        state['in_vars'] = in_var
+        b7x7dbl,_ = construct_layers(children[4:9], state)
+        state['in_vars'] = in_var
+        pool,_ = construct_layers(children[9:11], state)
+        tails = [x[-1].outputs[0] for x in [b1x1, b7x7, b7x7dbl, pool]]
+        cat_layer, state = insert_cat_layer(name, tails, state)
+        layers.extend(b1x1 + b7x7 + b7x7dbl + pool + [cat_layer])
+
+    elif isinstance(module, skeletons.inception.InceptionD):
+        assert len(children) == 7 , 'unexpected InceptionD size'
+        in_var = state['in_vars']
+        state['prefix'] = name 
+        b3x3,_ = construct_layers(children[:2], state)
+        state['in_vars'] = in_var
+        b7x7,_ = construct_layers(children[2:6], state)
+        state['in_vars'] = in_var
+        pool,_ = construct_layers(children[6:7], state)
+        tails = [x[-1].outputs[0] for x in [b3x3, b7x7, pool]]
+        cat_layer, state = insert_cat_layer(name, tails, state)
+        layers.extend(b3x3 + b7x7 + pool + [cat_layer])
+
+    elif isinstance(module, skeletons.inception.InceptionE):
+        assert len(children) == 10 , 'unexpected InceptionE size'
+        in_var = state['in_vars']
+        state['prefix'] = name 
+        b1x1,_ = construct_layers(children[:1], state)
+        state['in_vars'] = in_var
+        b3x3,_ = construct_layers(children[1:2], state)
+        branch1 = b3x3[-1].outputs[0]
+        state['in_vars'] = branch1
+        b3x3_2a,_ = construct_layers(children[2:3], state) # attach
+        state['in_vars'] = branch1
+        b3x3_2b,_ = construct_layers(children[3:4], state) # attach
+        tails = [x[-1].outputs[0] for x in [b3x3_2a, b3x3_2b]]
+        cat_name = '{}_branch2'.format(name)
+        cat2, state = insert_cat_layer(cat_name, tails, state)
+
+        state['in_vars'] = in_var
+        b3x3dbl,_ = construct_layers(children[4:6], state)
+        branch2 = b3x3dbl[-1].outputs[0]
+        state['in_vars'] = branch2
+        b3x3dbl_3a,_ = construct_layers(children[6:7], state) # attach
+        state['in_vars'] = branch2
+        b3x3dbl_3b,_ = construct_layers(children[7:8], state) # attach
+        tails = [x[-1].outputs[0] for x in [b3x3dbl_3a, b3x3dbl_3b]]
+        cat_name = '{}_branch3'.format(name)
+        cat3, state = insert_cat_layer(cat_name, tails, state)
+
+        state['in_vars'] = in_var
+        pool,_ = construct_layers(children[8:], state)
+        tails = [x[-1].outputs[0] for x in [b1x1, [cat2], [cat3], pool]]
+        cat_layer, state = insert_cat_layer(name, tails, state)
+        layers.extend(b1x1 + b3x3 + b3x3_2a + b3x3_2b + [cat2] +
+                       b3x3dbl + b3x3dbl_3a + b3x3dbl_3b + [cat3] +
+                       pool + [cat_layer])
+
     elif pl.is_lambda_map(list(module.children())[0]):
         id_var = state['in_vars']
-        children = list(module.named_children())
         assert pl.is_lambda_reduce(children[1][1]), 'invalid map reduce pair'
         _map, _reduce = children[0][1].lambda_func, children[1][1].lambda_func
         if _map(1) != 1: raise ValueError('only identity map supported')
@@ -322,7 +419,7 @@ def construct_layers(graph, state):
 
         elif isinstance(module, nn.modules.linear.Linear):
             state = update_size_info(name, 'Linear', state)
-            opts['bias_term'] = bool(module.bias)
+            opts['bias_term'] = bool(len(module.bias))
             opts['filter_depth'] = module.in_features
             opts['num_output'] = module.out_features
             opts['kernel_size'] = [1,1]
@@ -332,10 +429,17 @@ def construct_layers(graph, state):
             opts['group'] = 1
             layers.append(pl.PTConv(*pargs, **opts))
             
-
+        # add support for custom/skeleton modules here
         elif type(module) in [torchvision.models.resnet.Bottleneck, 
                               torchvision.models.resnet.BasicBlock, 
-                              torchvision.models.squeezenet.Fire] or \
+                              torchvision.models.squeezenet.Fire,
+                              skeletons.inception.BasicConv2d,
+                              skeletons.inception.InceptionA,
+                              skeletons.inception.InceptionB,
+                              skeletons.inception.InceptionC,
+                              skeletons.inception.InceptionD,
+                              skeletons.inception.InceptionE,
+                              ] or \
                               pl.has_lambda_child(module):
             prefix_ = state['prefix'] ; state['prefix'] = name
             layers_ = process_custom_module(name, module, state) # soz Guido

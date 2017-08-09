@@ -8,17 +8,23 @@ import cv2
 import math
 import ipdb
 import sys
-import inspect
+from PIL import Image
 import argparse
 import importlib
 import pathlib
 import copy
 import torch
 from torch import nn
+import skeletons.inception
 from torch import autograd
+import torchvision.transforms as transforms
+
 import torchvision
 import numpy as np
 from collections import OrderedDict
+
+sys.path.append(os.path.expanduser('~/coding/libs/pretrained-models.pytorch'))
+import pretrainedmodels
 
 # --------------------------------------------------------------------
 #                                                     Helpers Functions
@@ -176,6 +182,12 @@ class CanonicalNet(nn.Module):
         self.flatten_loc = flatten_loc
 
     def forward(self, x):
+        # mini = list(self.features.children())[:4] 
+        # mini_f = torch.nn.modules.Sequential(*mini) ; 
+        # y = mini_f(x)
+        # ipdb.set_trace()
+        # mini = list(self.features.children())
+
         x = self.features(x)
         if self.flatten_loc == 'classifier':
             x = x.view(x.size(0), -1)
@@ -188,11 +200,12 @@ class CanonicalNet(nn.Module):
             raise ValueError(msg)
         return x
 
-def canonical_net(net, name, flatten_loc='classifier'):
+def canonical_net(net, name, flatten_loc='classifier', remove_aux=False):
     """
     restructure models to be consistent for easier processing
     """
     is_resnet = isinstance(net, torchvision.models.resnet.ResNet)
+    is_inception = isinstance(net, torchvision.models.inception.Inception3)
     is_resnext = name in ['resnext_50_32x4d', 
                           'resnext_101_32x4d', 
                           'resnext_101_64x4d']
@@ -202,6 +215,44 @@ def canonical_net(net, name, flatten_loc='classifier'):
         feat_layers = [getattr(net, attr) for attr in feats_srcs]
         features = torch.nn.modules.Sequential(*feat_layers)
         classifier = torch.nn.modules.Sequential(net.fc)
+    elif is_inception:
+        skeleton = skeletons.inception.Inception3(aux_logits=False)
+        skeleton.parameters = net.parameters
+        skeleton.input_space = net.input_space
+        skeleton.input_size = net.input_size
+        skeleton.std = net.std
+        skeleton.mean = net.mean
+
+        # resort to transferring from skeleton definition
+        # TODO transfer modules
+        children = list(skeleton.children())  
+        tail = children[-1]
+        feat_layers = copy.deepcopy(children[:-1])
+
+        # debug
+        model = skeleton 
+        path_img = '/users/albanie/coding/libs/pretrained-models.pytorch/data/cat.jpg'
+        with open(path_img, 'rb') as f:
+            with Image.open(f) as img:
+                input_data = img.convert(model.input_space)
+
+        tf = transforms.Compose([
+            transforms.Scale(round(max(model.input_size)*1.143)),
+            transforms.CenterCrop(max(model.input_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=model.mean, std=model.std)
+        ])
+
+        input_data = tf(input_data)          # 3x400x225 -> 3x299x299
+        input_data = input_data.unsqueeze(0) # 3x299x299 -> 1x3x299x299
+        input = torch.autograd.Variable(input_data)
+        output = model(input) # size(1, 1000)
+
+        if remove_aux: # remove auxiliary classifiers if desired
+            feat_layers = [l for l in feat_layers if not 
+                    isinstance(l, torchvision.models.inception.InceptionAux)]
+        classifier = torch.nn.modules.Sequential(tail)
+        features = torch.nn.modules.Sequential(*feat_layers)
     elif is_resnext:
         children = list(net.children())  
         feat_layers = copy.deepcopy(children[:-2])
@@ -235,6 +286,9 @@ def load_pytorch_model(name, paths=None):
         net = torchvision.models.vgg16(pretrained=True)
     elif name == 'vgg19':
         net = torchvision.models.vgg16(pretrained=True)
+    elif name == 'inception_v3':
+        net = pretrainedmodels.__dict__['inceptionv3'](pretrained='imagenet')
+        net = canonical_net(net, name, flatten_loc)
     elif name == 'squeezenet1_0':
         net = torchvision.models.squeezenet1_0(pretrained=True)
         flatten_loc = 'end' # delay flattening
@@ -292,6 +346,7 @@ def in_place_replica(x):
 
 def get_custom_feats(net, x):
     children = list(net.children())
+    child_warning = 'unexpected number of children'
     if isinstance(net, torchvision.models.squeezenet.Fire):
         assert len(children) == 6, 'unexpected number of children'
         squeeze = torch.nn.Sequential(*children[:2])
@@ -304,7 +359,7 @@ def get_custom_feats(net, x):
             feats.append(subnet(x))
         feats.append(net(x))
     elif isinstance(net, torchvision.models.resnet.BasicBlock):
-        assert len(children) == 5 + bool(net.downsample), 'unexpected number of children'
+        assert len(children) == 5 + bool(net.downsample), child_warning
         feats = []
         residual = x
         c1 = net.conv1(x) ; feats.append(c1)
@@ -320,7 +375,7 @@ def get_custom_feats(net, x):
         out += residual ; feats.append(in_place_replica(out))
         out = net.relu(out) ; feats.append(out)
     elif isinstance(net, torchvision.models.resnet.Bottleneck):
-        assert len(children) == 7 + bool(net.downsample), 'unexpected number of children'
+        assert len(children) == 7 + bool(net.downsample), child_warning
         feats = []
         residual = x
         c1 = net.conv1(x) ; feats.append(c1)
@@ -338,6 +393,91 @@ def get_custom_feats(net, x):
             feats.append(in_place_replica(residual))
         out += residual ; feats.append(in_place_replica(out))
         out = net.relu(out) ; feats.append(out)
+    elif isinstance(net, skeletons.inception.BasicConv2d):
+        # Inception Basic Building Block
+        # ------------------------------
+        assert len(children) == 3, child_warning
+        c1 = net.conv(x) ; feats = [c1]
+        bn1 = net.bn(c1) ; feats.append(bn1)
+        out = net.relu(bn1) ; feats.append(out)
+    elif isinstance(net, skeletons.inception.InceptionA):
+        # Inception A style module
+        assert len(children) == 8, child_warning
+        # for each call to get_feats, we skip over the first retuned feature 
+        # (since it is a duplicate of the input)
+        br1x1 = get_feats(net.branch1x1, x)[1:] ; b1 = br1x1[-1]
+        br5x5_1 = get_feats(net.branch5x5_1, x)[1:] ; z = br5x5_1[-1]
+        br5x5_2 = get_feats(net.branch5x5_2, z)[1:] ; b5 = br5x5_2[-1]
+        br3x3dbl_1 = get_feats(net.branch3x3dbl_1, x)[1:] ; z = br3x3dbl_1[-1]
+        br3x3dbl_2 = get_feats(net.branch3x3dbl_2, z)[1:] ; z = br3x3dbl_2[-1]
+        br3x3dbl_3 = get_feats(net.branch3x3dbl_3, z)[1:] ; b3 = br3x3dbl_3[-1]
+        avg = net.branch_avgpool(x) ; # branch_avgpool is an nn.Module
+        brpool = get_feats(net.branch_pool, avg)[1:] ; bp = brpool[-1]
+        out = torch.cat([b1, b5, b3, bp], 1)
+        feats = (br1x1 + br5x5_1 + br5x5_2 + br3x3dbl_1 + 
+                    br3x3dbl_2 + br3x3dbl_3 + [avg] + brpool + [out])
+    elif isinstance(net, skeletons.inception.InceptionB):
+        # Inception B style module
+        assert len(children) == 5, child_warning
+        br3x3 = get_feats(net.branch3x3, x)[1:] ; b3_1 = br3x3[-1]
+        br3x3dbl_1 = get_feats(net.branch3x3dbl_1, x)[1:] ; z = br3x3dbl_1[-1]
+        br3x3dbl_2 = get_feats(net.branch3x3dbl_2, z)[1:] ; z = br3x3dbl_2[-1]
+        br3x3dbl_3 = get_feats(net.branch3x3dbl_3, z)[1:] ; b3_2 = br3x3dbl_3[-1]
+        brpool = net.branch_pool(x) 
+        out = torch.cat([b3_1, b3_2, brpool], 1)
+        feats = (br3x3 + br3x3dbl_1 + br3x3dbl_2 + br3x3dbl_3 + [brpool] + [out])
+    elif isinstance(net, skeletons.inception.InceptionC):
+        # Inception C style module
+        assert len(children) == 11, child_warning
+        br1x1 = get_feats(net.branch1x1, x)[1:] ; b1 = br1x1[-1]
+        br7x7_1 = get_feats(net.branch7x7_1, x)[1:] ; z = br7x7_1[-1]
+        br7x7_2 = get_feats(net.branch7x7_2, z)[1:] ; z = br7x7_2[-1]
+        br7x7_3 = get_feats(net.branch7x7_3, z)[1:] ; b7_1 = br7x7_3[-1]
+        br7x7dbl_1 = get_feats(net.branch7x7dbl_1, x)[1:] ; z = br7x7dbl_1[-1]
+        br7x7dbl_2 = get_feats(net.branch7x7dbl_2, z)[1:] ; z = br7x7dbl_2[-1]
+        br7x7dbl_3 = get_feats(net.branch7x7dbl_3, z)[1:] ; z = br7x7dbl_3[-1]
+        br7x7dbl_4 = get_feats(net.branch7x7dbl_4, z)[1:] ; z = br7x7dbl_4[-1]
+        br7x7dbl_5 = get_feats(net.branch7x7dbl_5, z)[1:] ; b7_2 = br7x7dbl_5[-1]
+
+        avg = net.branch_avgpool(x) 
+        brpool = get_feats(net.branch_pool, avg)[1:] ; bp = brpool[-1]
+        out = torch.cat([b1, b7_1, b7_2, bp], 1)
+        feats = (br1x1 + br7x7_1 + br7x7_2 + br7x7_3 + br7x7dbl_1 + 
+                  br7x7dbl_2 + br7x7dbl_3 + br7x7dbl_4 + br7x7dbl_5 + 
+                  [avg] + brpool + [out])
+    elif isinstance(net, skeletons.inception.InceptionD):
+        assert len(children) == 7, child_warning
+        br3x3_1 = get_feats(net.branch3x3_1, x)[1:] ; z = br3x3_1[-1]
+        br3x3_2 = get_feats(net.branch3x3_2, z)[1:] ; b3 = br3x3_2[-1]
+        br7x7x3_1 = get_feats(net.branch7x7x3_1, x)[1:] ; z = br7x7x3_1[-1]
+        br7x7x3_2 = get_feats(net.branch7x7x3_2, z)[1:] ; z = br7x7x3_2[-1]
+        br7x7x3_3 = get_feats(net.branch7x7x3_3, z)[1:] ; z = br7x7x3_3[-1]
+        br7x7x3_4 = get_feats(net.branch7x7x3_4, z)[1:] ; b7 = br7x7x3_4[-1]
+
+        brpool = net.branch_maxpool(x) 
+        out = torch.cat([b3, b7,  brpool], 1)
+        feats = (br3x3_1 + br3x3_2 + br7x7x3_1 + br7x7x3_2 + br7x7x3_3 
+                      + br7x7x3_4 + [brpool] + [out])
+    elif isinstance(net, skeletons.inception.InceptionE):
+        assert len(children) == 10, child_warning
+        br1x1 = get_feats(net.branch1x1, x)[1:] ; b1 = br1x1[-1]
+        br3x3_1 = get_feats(net.branch3x3_1, x)[1:] ; z = br3x3_1[-1]
+        br3x3_2a = get_feats(net.branch3x3_2a, z)[1:] ; z1 = br3x3_2a[-1]
+        br3x3_2b = get_feats(net.branch3x3_2b, z)[1:] ; z2 = br3x3_2b[-1]
+        br3x3 = torch.cat([z1, z2], 1)
+        br3x3dbl_1 = get_feats(net.branch3x3dbl_1, x)[1:] ; z = br3x3dbl_1[-1]
+        br3x3dbl_2 = get_feats(net.branch3x3dbl_2, z)[1:] ; z = br3x3dbl_2[-1]
+        br3x3dbl_3a = get_feats(net.branch3x3dbl_3a, z)[1:] ; z1 = br3x3dbl_3a[-1]
+        br3x3dbl_3b = get_feats(net.branch3x3dbl_3b, z)[1:] ; z2 = br3x3dbl_3b[-1]
+        br3x3dbl = torch.cat([z1, z2], 1)
+        avg = net.branch_avgpool(x) ; 
+        brpool = get_feats(net.branch_pool, avg)[1:] ; bp = brpool[-1]
+
+        out = torch.cat([b1, br3x3, br3x3dbl, bp], 1)
+        feats = (br1x1 + br3x3_1 + br3x3_2a + br3x3_2b + [br3x3]
+              + br3x3dbl_1 + br3x3dbl_2 + br3x3dbl_3a + br3x3dbl_3b + [br3x3dbl]
+              + [avg] + brpool + [out])
+
     elif isinstance(net, MapReducePair):
         _map, _reduce = net.map.lambda_func, net.reduce.lambda_func
         if _map(1) != 1: raise ValueError('only identity map supported')
@@ -403,6 +543,12 @@ def get_feats(net, x, feats=[]):
    if type(tail) in [torchvision.models.squeezenet.Fire, 
                      torchvision.models.resnet.BasicBlock, 
                      torchvision.models.resnet.Bottleneck,
+                     skeletons.inception.BasicConv2d,
+                     skeletons.inception.InceptionA,
+                     skeletons.inception.InceptionB,
+                     skeletons.inception.InceptionC,
+                     skeletons.inception.InceptionD,
+                     skeletons.inception.InceptionE,
                      MapReducePair]:
        tail_feats = get_custom_feats(tail, trunk_feats[-1])
    else:
