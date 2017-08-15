@@ -278,7 +278,13 @@ def load_pytorch_model(name, paths=None):
     if paths: # load custom net params and defs
         def_path = pathlib.Path(paths['def'])
         sys.path.insert(0, str(def_path.parent))
-        model_def = importlib.import_module(str(def_path.stem))
+        try:
+          model_def = importlib.import_module(str(def_path.stem))
+        except ImportError:
+            msg = 'Failed to import the specified custom model definition ' \
+                   + 'module `{}`. Is it on the PYTHONPATH?'
+            print(msg.format(def_path.stem))
+            raise
 
     if name == 'alexnet':
         net = torchvision.models.alexnet(pretrained=True)
