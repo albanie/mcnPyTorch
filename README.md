@@ -42,7 +42,12 @@ vl_contrib('install', 'mcnPyTorch') ;
 vl_contrib('setup', 'mcnPyTorch') ;
 ```
 
-**Dependencies**: `Python3` and `PyTorch`, and a few other modules which should be easy to install with `conda`.
+**Dependencies**: 
+
+* `Python3` 
+* `PyTorch`
+* standard numerical Python modules (which should be easy to install with `conda`) 
+* The [Cadene repo](https://github.com/Cadene/pretrained-models.pytorch/tree/master/pretrainedmodels) of pre-trained pytorch models (adds support for additional networks which are not included in the main torchvision module)
 
 
 ### Notes
