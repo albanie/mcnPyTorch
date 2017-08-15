@@ -1,7 +1,7 @@
 function run_benchmarks
 % do a single pass over the imagenet validation data
 
-gpus = [3] ;
+gpus = 1 ;
 batchSize = 256 ;
 useCached = 1 ; % load results from cache if available
 
@@ -21,6 +21,7 @@ importedModels = {
 'resnext_50_32x4d-pt-mcn', ...
 'resnext_101_32x4d-pt-mcn', ...
 'resnext_101_64x4d-pt-mcn', ...
+'inception_v3-pt-mcn', ...
 } ;
 
 for ii = 1:numel(importedModels)
