@@ -297,7 +297,7 @@ def load_pytorch_model(name, paths=None):
     elif name == 'vgg16':
         net = torchvision.models.vgg16(pretrained=True)
     elif name == 'vgg19':
-        net = torchvision.models.vgg16(pretrained=True)
+        net = torchvision.models.vgg19(pretrained=True)
     elif name == 'inception_v3':
         net = pretrainedmodels.__dict__['inceptionv3'](pretrained='imagenet')
         net = canonical_net(net, name, flatten_loc)
