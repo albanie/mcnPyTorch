@@ -26,9 +26,8 @@ see the `importer.sh` script (this can be modified to import new models).
 ### Installation
 
 The easiest way to use this module is to install it with the `vl_contrib` 
-package manager. `mcnPyTorch` can then be installed with the following three 
-commands from the root directory of your MatConvNet 
-installation:
+package manager. `mcnPyTorch` can be installed with the following three commands from 
+the root directory of your MatConvNet installation:
 
 ```
 vl_contrib('install', 'mcnPyTorch') ;
