@@ -26,15 +26,8 @@ see the `importer.sh` script (this can be modified to import new models).
 ### Installation
 
 The easiest way to use this module is to install it with the `vl_contrib` 
-package manager. `vl_contrib` is not yet part of the main MatConvNet 
-distribution, but it can be easily obtained by using the 
-[contrib branch](https://github.com/vlfeat/matconvnet/tree/contrib) of the 
-github repo. To switch to this branch (after cloning), you can simply run 
-
-`git checkout -b contrib origin/contrib`
-
-from the root directory. Once this is done, `mcnPyTorch` can then be installed 
-with the following three commands from the root directory of your MatConvNet 
+package manager. `mcnPyTorch` can then be installed with the following three 
+commands from the root directory of your MatConvNet 
 installation:
 
 ```
