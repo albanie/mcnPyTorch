@@ -6,5 +6,5 @@ function setup_mcnPyTorch()
 % Copyright (C) 2017 Samuel Albanie 
 
   root = fileparts(mfilename('fullpath')) ;
-  addpath(root, [root '/matlab'], [root '/test'], [root '/benchmarks']) ;
+  addpath(root, [root '/test'], [root '/benchmarks']) ;
   addpath([root '/misc']) ;
