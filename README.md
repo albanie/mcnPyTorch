@@ -41,7 +41,7 @@ vl_contrib('setup', 'mcnPyTorch') ;
 * standard numerical Python modules (which should be easy to install with `conda`) 
 * The [Cadene repo](https://github.com/Cadene/pretrained-models.pytorch/tree/master/pretrainedmodels) of pre-trained pytorch models (adds support for additional networks which are not included in the main torchvision module)
 
-To run the imported modules, the following matconvnet modules are also required:
+To run the imported networks, the following matconvnet modules are also required:
 
 * [autonn](https://github.com/vlfeat/autonn) - automatic differenation
 * [mcnExtraLayers](https://github.com/albanie/mcnExtraLayers) - extra MatConvNet layers
