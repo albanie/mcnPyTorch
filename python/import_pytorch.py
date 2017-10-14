@@ -90,7 +90,9 @@ def process_custom_module(name, module, state):
             state['in_vars'] = prev
             id_var = down_block[-1].outputs
 
-        merge_name = '{}_merge'.format(name) ; ins = [*id_var, *state['in_vars']]
+        merge_name = '{}_merge'.format(name) ; 
+        # ins = [*id_var, *state['in_vars']]
+        ins = [id_var, *state['in_vars']]
         merge_layer = pl.PTSum(merge_name, ins, [merge_name])
         state = update_size_info(name, 'mcn-sum', state)
         layers.append(merge_layer)
@@ -241,6 +243,22 @@ def process_custom_module(name, module, state):
         layers.extend(b1x1 + b3x3 + b3x3_2a + b3x3_2b + [cat2] +
                        b3x3dbl + b3x3dbl_3a + b3x3dbl_3b + [cat3] +
                        pool + [cat_layer])
+    elif isinstance(module, torchvision.models.densenet._DenseBlock):
+        num_dense_layers = len(children)
+        feed_in = state['in_vars']
+        for dense_layer in children:
+          id_var = state['in_vars'] # all outputs form the next input
+          state['prefix'] = '{}_{}'.format(name, dense_layer[0])
+          dense_children = list(dense_layer[1].named_children())
+          dense_out,_ = construct_layers(dense_children, state)
+          cat_inputs = id_var + [dense_out[-1].name]
+          cat_name = state['prefix']
+          cat_layer, state = insert_cat_layer(cat_name, cat_inputs, state)
+          state['in_vars'] = state['out_vars']
+          layers.extend(dense_out + [cat_layer])
+
+    elif isinstance(module, torchvision.models.densenet._Transition):
+        layers,_ = construct_layers(children, state)
 
     elif pl.is_lambda_map(list(module.children())[0]):
         id_var = state['in_vars']
@@ -408,6 +426,8 @@ def construct_layers(graph, state):
         elif type(module) in [torchvision.models.resnet.Bottleneck, 
                               torchvision.models.resnet.BasicBlock, 
                               torchvision.models.squeezenet.Fire,
+                              torchvision.models.densenet._Transition,
+                              torchvision.models.densenet._DenseBlock,
                               skeletons.inception.BasicConv2d,
                               skeletons.inception.InceptionA,
                               skeletons.inception.InceptionB,
@@ -520,4 +540,6 @@ mnet['params'] = mnet['params'].reshape(1,-1)
 # --------------------------------------------------------------------
 
 print('Saving network to {}'.format(args_.mcn_model))
+# import ipdb ; ipdb.set_trace()
+# scipy.io.savemat(args_.mcn_model, {'check': zz}, oned_as='column')
 scipy.io.savemat(args_.mcn_model, mnet, oned_as='column')

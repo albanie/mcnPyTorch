@@ -209,6 +209,7 @@ def canonical_net(net, name, flatten_loc='classifier', remove_aux=True):
     restructure models to be consistent for easier processing
     """
     is_resnet = isinstance(net, torchvision.models.resnet.ResNet)
+    is_densenet = isinstance(net, torchvision.models.densenet.DenseNet)
     is_inception = isinstance(net, torchvision.models.inception.Inception3)
     is_resnext = name in ['resnext_50_32x4d', 
                           'resnext_101_32x4d', 
@@ -219,6 +220,14 @@ def canonical_net(net, name, flatten_loc='classifier', remove_aux=True):
         feat_layers = [getattr(net, attr) for attr in feats_srcs]
         features = torch.nn.modules.Sequential(*feat_layers)
         classifier = torch.nn.modules.Sequential(net.fc)
+    elif is_densenet:
+        feats = net.features
+        # insert additional 
+        # out = F.relu(features, inplace=True)
+        # out = F.avg_pool2d(out, kernel_size=7).view(features.size(0), -1)
+        feats_ = [feats, nn.ReLU(inplace=True), nn.AvgPool2d(7)]
+        features = nn.modules.Sequential(*feats_)
+        classifier = nn.modules.Sequential(net.classifier)
     elif is_inception:
         # skeleton = skeletons.inception.Inception3(aux_logits=False)
         skeleton = skeletons.inception.inception_v3(pretrained=True)
@@ -322,6 +331,18 @@ def load_pytorch_model(name, paths=None):
     elif name == 'resnet152':
         net = torchvision.models.resnet152(pretrained=True)
         net = canonical_net(net, name)
+    elif name == 'densenet121':
+        net = torchvision.models.densenet121(pretrained=True)
+        net = canonical_net(net, name)
+    elif name == 'densenet161':
+        net = torchvision.models.densenet161(pretrained=True)
+        net = canonical_net(net, name)
+    elif name == 'densenet169':
+        net = torchvision.models.densenet169(pretrained=True)
+        net = canonical_net(net, name)
+    elif name == 'densenet201':
+        net = torchvision.models.densenet201(pretrained=True)
+        net = canonical_net(net, name)
     elif name == 'resnext_50_32x4d':
         net = model_def.resnext_50_32x4d 
         net.load_state_dict(torch.load(paths['weights']))
@@ -352,7 +373,7 @@ class MapReducePair(object):
 def in_place_replica(x):
     """ Returns a deep copy of an autograd variable's data. 
     A number of PyTorch operations are perfomed in-place, which 
-    makes  graph comparison non-trivial. This function enables the 
+    makes graph comparison non-trivial. This function enables the 
     state of the variable to be stored before it is overwritten"""
     return copy.deepcopy(autograd.Variable(x.data))
 
@@ -370,6 +391,30 @@ def get_custom_feats(net, x):
             feats.append(raw) # without relu
             feats.append(subnet(x))
         feats.append(net(x))
+    elif isinstance(net, torchvision.models.densenet._DenseBlock):
+        assert len(children) % 2 == 0, 'unexpected number of children'
+        feats = []
+        current_in = x
+        for dense_layer in children:
+            # every dense block has the same form
+            bn1 = getattr(dense_layer, 'norm.1')(current_in)
+            feats.append(in_place_replica(bn1))
+            r1 = getattr(dense_layer, 'relu.1')(bn1) ; feats.append(r1)
+            c1 = getattr(dense_layer, 'conv.1')(r1) ; feats.append(c1)
+            bn2 = getattr(dense_layer, 'norm.2')(c1) 
+            feats.append(in_place_replica(bn2))
+            r2 = getattr(dense_layer, 'relu.2')(bn2) ; feats.append(r2)
+            c2 = getattr(dense_layer, 'conv.2')(r2) ; feats.append(c2)
+            cat_out = torch.cat([current_in, c2], 1)
+            feats.append(cat_out)
+            current_in = cat_out
+    elif isinstance(net, torchvision.models.densenet._Transition):
+        assert len(children) == 4, 'unexpected number of children'
+        feats = []
+        bn = net.norm(x) ; feats.append(in_place_replica(bn))
+        r = net.relu(bn) ; feats.append(r)
+        c = net.conv(r) ; feats.append(c)
+        p = net.pool(c) ; feats.append(p)
     elif isinstance(net, torchvision.models.resnet.BasicBlock):
         assert len(children) == 5 + bool(net.downsample), child_warning
         feats = []
@@ -544,6 +589,9 @@ def get_feats(net, x, feats=[]):
        assert is_lambda_map(head[-1]), 'invalid map reduce pair'
        tail = MapReducePair(head[-1], tail)
        head = head[:-1] # adjust head
+   elif isinstance(tail, (torchvision.models.densenet._DenseBlock, 
+                          torchvision.models.densenet._Transition)):
+       pass # handel in the custom block
    else: # standard model structure
        while isinstance(tail, torch.nn.Sequential): 
            children = list(tail.children())
@@ -555,6 +603,8 @@ def get_feats(net, x, feats=[]):
    if type(tail) in [torchvision.models.squeezenet.Fire, 
                      torchvision.models.resnet.BasicBlock, 
                      torchvision.models.resnet.Bottleneck,
+                     torchvision.models.densenet._DenseBlock,
+                     torchvision.models.densenet._Transition,
                      skeletons.inception.BasicConv2d,
                      skeletons.inception.InceptionA,
                      skeletons.inception.InceptionB,
