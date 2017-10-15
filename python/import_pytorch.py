@@ -9,20 +9,14 @@
 # Copyright (C) 2017 Samuel Albanie 
 # --------------------------------------------------------
 
-import os
 import sys
-import copy
 import ipdb
-import torch
-import argparse
 import scipy.io
 import numpy as np
 import torchvision
 import pytorch_utils as pl
 import skeletons
 from torch import nn
-from pathlib import Path
-import pytorch_utils as pl
 from collections import OrderedDict
 from torch.autograd import Variable
 from ast import literal_eval as make_tuple
@@ -91,8 +85,7 @@ def process_custom_module(name, module, state):
             id_var = down_block[-1].outputs
 
         merge_name = '{}_merge'.format(name) ; 
-        # ins = [*id_var, *state['in_vars']]
-        ins = [id_var, *state['in_vars']]
+        ins = id_var + state['in_vars']
         merge_layer = pl.PTSum(merge_name, ins, [merge_name])
         state = update_size_info(name, 'mcn-sum', state)
         layers.append(merge_layer)
@@ -121,7 +114,8 @@ def process_custom_module(name, module, state):
             state['in_vars'] = prev
             id_var = down_block[-1].outputs
 
-        merge_name = '{}_merge'.format(name) ; ins = [*id_var, *state['in_vars']]
+        merge_name = '{}_merge'.format(name) 
+        ins = id_var + state['in_vars']
         merge_layer = pl.PTSum(merge_name, ins, [merge_name])
         state = update_size_info(name, 'mcn-sum', state)
         layers.append(merge_layer)
@@ -244,18 +238,16 @@ def process_custom_module(name, module, state):
                        b3x3dbl + b3x3dbl_3a + b3x3dbl_3b + [cat3] +
                        pool + [cat_layer])
     elif isinstance(module, torchvision.models.densenet._DenseBlock):
-        num_dense_layers = len(children)
-        feed_in = state['in_vars']
         for dense_layer in children:
-          id_var = state['in_vars'] # all outputs form the next input
-          state['prefix'] = '{}_{}'.format(name, dense_layer[0])
-          dense_children = list(dense_layer[1].named_children())
-          dense_out,_ = construct_layers(dense_children, state)
-          cat_inputs = id_var + [dense_out[-1].name]
-          cat_name = state['prefix']
-          cat_layer, state = insert_cat_layer(cat_name, cat_inputs, state)
-          state['in_vars'] = state['out_vars']
-          layers.extend(dense_out + [cat_layer])
+            id_var = state['in_vars'] # all outputs form the next input
+            state['prefix'] = '{}_{}'.format(name, dense_layer[0])
+            dense_children = list(dense_layer[1].named_children())
+            dense_out,_ = construct_layers(dense_children, state)
+            cat_inputs = id_var + [dense_out[-1].name]
+            cat_name = state['prefix']
+            cat_layer, state = insert_cat_layer(cat_name, cat_inputs, state)
+            state['in_vars'] = state['out_vars']
+            layers.extend(dense_out + [cat_layer])
 
     elif isinstance(module, torchvision.models.densenet._Transition):
         layers,_ = construct_layers(children, state)
@@ -284,7 +276,7 @@ def process_custom_module(name, module, state):
             assert projection[1].lambda_func(1) == 1, msg
 
         merge_name = '{}_merge'.format(name)
-        merge_layer = pl.PTSum(merge_name, [*id_var, *state['in_vars']], [merge_name])
+        merge_layer = pl.PTSum(merge_name, id_var+state['in_vars'], [merge_name])
         state = update_size_info(name, 'mcn-sum', state)
         layers.append(merge_layer)
         state['in_vars'] = merge_layer.outputs
