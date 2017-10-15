@@ -13,7 +13,7 @@ function compare_mcn_features
 
   opts.featurePath = 'data/mcnPyTorch/pyt-feats.mat' ;
   opts.modelDir = fullfile(vl_rootnn, 'data/models-import') ;
-  opts.modelPath = fullfile(opts.modelDir, 'inception_v3-pt-mcn.mat') ;
+  opts.modelPath = fullfile(opts.modelDir, 'densenet121-pt-mcn.mat') ;
 
   feats = load(opts.featurePath) ; 
   dag = dagnn.DagNN.loadobj(load(opts.modelPath)) ;
