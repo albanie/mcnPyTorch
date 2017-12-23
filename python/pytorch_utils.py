@@ -4,7 +4,7 @@
 # --------------------------------------------------------
 # mcnPyTorch
 # Licensed under The MIT License [see LICENSE.md for details]
-# Copyright (C) 2017 Samuel Albanie 
+# Copyright (C) 2017 Samuel Albanie
 # --------------------------------------------------------
 
 import os
@@ -12,7 +12,6 @@ import cv2
 import math
 import ipdb
 import sys
-from PIL import Image
 import argparse
 import importlib
 import pathlib
@@ -21,7 +20,6 @@ import torch
 from torch import nn
 import skeletons.inception
 from torch import autograd
-import torchvision.transforms as transforms
 
 import torchvision
 import numpy as np
@@ -119,7 +117,7 @@ def rowcell(x):
     return np.array(x,dtype=object).reshape(1,-1)
 
 def tolist(x):
-    """Convert x to a Python list. x can be a Torch size tensor, a list, tuple 
+    """Convert x to a Python list. x can be a Torch size tensor, a list, tuple
     or scalar
     """
     if isinstance(x, torch.Size):
@@ -154,8 +152,8 @@ def dictToMatlabStruct(d):
     return y
 
 class ImTransform(object):
-    """Create image transformation 
-    
+    """Create image transformation
+
     Args:
         resize (int): input dims
         rgb ((int,int,int)): average RGB values of the dataset
@@ -186,8 +184,8 @@ class CanonicalNet(nn.Module):
         self.flatten_loc = flatten_loc
 
     def forward(self, x):
-        # mini = list(self.features.children())[:4] 
-        # mini_f = torch.nn.modules.Sequential(*mini) ; 
+        # mini = list(self.features.children())[:4]
+        # mini_f = torch.nn.modules.Sequential(*mini) ;
         # y = mini_f(x)
         # ipdb.set_trace()
         # mini = list(self.features.children())
@@ -211,8 +209,8 @@ def canonical_net(net, name, flatten_loc='classifier', remove_aux=True):
     is_resnet = isinstance(net, torchvision.models.resnet.ResNet)
     is_densenet = isinstance(net, torchvision.models.densenet.DenseNet)
     is_inception = isinstance(net, torchvision.models.inception.Inception3)
-    is_resnext = name in ['resnext_50_32x4d', 
-                          'resnext_101_32x4d', 
+    is_resnext = name in ['resnext_50_32x4d',
+                          'resnext_101_32x4d',
                           'resnext_101_64x4d']
     if is_resnet:
         feats_srcs = ['conv1', 'bn1', 'relu', 'maxpool', 'layer1',
@@ -222,7 +220,7 @@ def canonical_net(net, name, flatten_loc='classifier', remove_aux=True):
         classifier = torch.nn.modules.Sequential(net.fc)
     elif is_densenet:
         feats = net.features
-        # insert additional 
+        # insert additional
         # out = F.relu(features, inplace=True)
         # out = F.avg_pool2d(out, kernel_size=7).view(features.size(0), -1)
         feats_ = [feats, nn.ReLU(inplace=True), nn.AvgPool2d(7)]
@@ -231,7 +229,7 @@ def canonical_net(net, name, flatten_loc='classifier', remove_aux=True):
     elif is_inception:
         # skeleton = skeletons.inception.Inception3(aux_logits=False)
         skeleton = skeletons.inception.inception_v3(pretrained=True)
-        children = list(skeleton.children())  
+        children = list(skeleton.children())
         tail = children[-1]
         feat_layers = copy.deepcopy(children[:-1])
 
@@ -245,7 +243,7 @@ def canonical_net(net, name, flatten_loc='classifier', remove_aux=True):
         # # TODO transfer modules
 
         # # debug
-        # model = skeleton 
+        # model = skeleton
         # path_img = '/users/albanie/coding/libs/pretrained-models.pytorch/data/cat.jpg'
         # with open(path_img, 'rb') as f:
             # with Image.open(f) as img:
@@ -264,12 +262,12 @@ def canonical_net(net, name, flatten_loc='classifier', remove_aux=True):
         # output = model(input) # size(1, 1000)
 
         if remove_aux: # remove auxiliary classifiers if desired
-            feat_layers = [l for l in feat_layers if not 
+            feat_layers = [l for l in feat_layers if not
                     isinstance(l, skeletons.inception.InceptionAux)]
         classifier = torch.nn.modules.Sequential(tail)
         features = torch.nn.modules.Sequential(*feat_layers)
     elif is_resnext:
-        children = list(net.children())  
+        children = list(net.children())
         feat_layers = copy.deepcopy(children[:-2])
         tail = copy.deepcopy(net)
         while not isinstance(tail, nn.modules.linear.Linear):
@@ -344,15 +342,15 @@ def load_pytorch_model(name, paths=None):
         net = torchvision.models.densenet201(pretrained=True)
         net = canonical_net(net, name)
     elif name == 'resnext_50_32x4d':
-        net = model_def.resnext_50_32x4d 
+        net = model_def.resnext_50_32x4d
         net.load_state_dict(torch.load(paths['weights']))
         net = canonical_net(net, name, flatten_loc=flatten_loc)
     elif name == 'resnext_101_32x4d':
-        net = model_def.resnext_101_32x4d 
+        net = model_def.resnext_101_32x4d
         net.load_state_dict(torch.load(paths['weights']))
         net = canonical_net(net, name, flatten_loc=flatten_loc)
     elif name == 'resnext_101_64x4d':
-        net = model_def.resnext_101_64x4d 
+        net = model_def.resnext_101_64x4d
         net.load_state_dict(torch.load(paths['weights']))
         net = canonical_net(net, name, flatten_loc=flatten_loc)
     else:
@@ -371,9 +369,9 @@ class MapReducePair(object):
     def children(self): return [] # maintain interface
 
 def in_place_replica(x):
-    """ Returns a deep copy of an autograd variable's data. 
-    A number of PyTorch operations are perfomed in-place, which 
-    makes graph comparison non-trivial. This function enables the 
+    """ Returns a deep copy of an autograd variable's data.
+    A number of PyTorch operations are perfomed in-place, which
+    makes graph comparison non-trivial. This function enables the
     state of the variable to be stored before it is overwritten"""
     return copy.deepcopy(autograd.Variable(x.data))
 
@@ -401,7 +399,7 @@ def get_custom_feats(net, x):
             feats.append(in_place_replica(bn1))
             r1 = getattr(dense_layer, 'relu.1')(bn1) ; feats.append(r1)
             c1 = getattr(dense_layer, 'conv.1')(r1) ; feats.append(c1)
-            bn2 = getattr(dense_layer, 'norm.2')(c1) 
+            bn2 = getattr(dense_layer, 'norm.2')(c1)
             feats.append(in_place_replica(bn2))
             r2 = getattr(dense_layer, 'relu.2')(bn2) ; feats.append(r2)
             c2 = getattr(dense_layer, 'conv.2')(r2) ; feats.append(c2)
@@ -424,7 +422,7 @@ def get_custom_feats(net, x):
         r1 = net.relu(bn1) ; feats.append(r1)
         c2 = net.conv2(r1) ; feats.append(c2)
         out = net.bn2(c2) ; feats.append(in_place_replica(out))
-        if net.downsample: 
+        if net.downsample:
             projection = list(net.downsample.children())[0]
             proj = projection(residual) ; feats.append(in_place_replica(proj))
             residual = net.downsample(residual) # apply sequence
@@ -443,7 +441,7 @@ def get_custom_feats(net, x):
         r2 = net.relu(bn2) ; feats.append(r2)
         c3 = net.conv3(r2) ; feats.append(c3)
         out = net.bn3(c3) ; feats.append(in_place_replica(out))
-        if net.downsample: 
+        if net.downsample:
             projection = list(net.downsample.children())[0]
             proj = projection(residual) ; feats.append(in_place_replica(proj))
             residual = net.downsample(residual) # apply sequence
@@ -460,7 +458,7 @@ def get_custom_feats(net, x):
     elif isinstance(net, skeletons.inception.InceptionA):
         # Inception A style module
         assert len(children) == 8, child_warning
-        # for each call to get_feats, we skip over the first retuned feature 
+        # for each call to get_feats, we skip over the first retuned feature
         # (since it is a duplicate of the input)
         br1x1 = get_feats(net.branch1x1, x)[1:] ; b1 = br1x1[-1]
         br5x5_1 = get_feats(net.branch5x5_1, x)[1:] ; z = br5x5_1[-1]
@@ -471,7 +469,7 @@ def get_custom_feats(net, x):
         avg = net.branch_avgpool(x) ; # branch_avgpool is an nn.Module
         brpool = get_feats(net.branch_pool, avg)[1:] ; bp = brpool[-1]
         out = torch.cat([b1, b5, b3, bp], 1)
-        feats = (br1x1 + br5x5_1 + br5x5_2 + br3x3dbl_1 + 
+        feats = (br1x1 + br5x5_1 + br5x5_2 + br3x3dbl_1 +
                     br3x3dbl_2 + br3x3dbl_3 + [avg] + brpool + [out])
     elif isinstance(net, skeletons.inception.InceptionB):
         # Inception B style module
@@ -480,7 +478,7 @@ def get_custom_feats(net, x):
         br3x3dbl_1 = get_feats(net.branch3x3dbl_1, x)[1:] ; z = br3x3dbl_1[-1]
         br3x3dbl_2 = get_feats(net.branch3x3dbl_2, z)[1:] ; z = br3x3dbl_2[-1]
         br3x3dbl_3 = get_feats(net.branch3x3dbl_3, z)[1:] ; b3_2 = br3x3dbl_3[-1]
-        brpool = net.branch_pool(x) 
+        brpool = net.branch_pool(x)
         out = torch.cat([b3_1, b3_2, brpool], 1)
         feats = (br3x3 + br3x3dbl_1 + br3x3dbl_2 + br3x3dbl_3 + [brpool] + [out])
     elif isinstance(net, skeletons.inception.InceptionC):
@@ -496,11 +494,11 @@ def get_custom_feats(net, x):
         br7x7dbl_4 = get_feats(net.branch7x7dbl_4, z)[1:] ; z = br7x7dbl_4[-1]
         br7x7dbl_5 = get_feats(net.branch7x7dbl_5, z)[1:] ; b7_2 = br7x7dbl_5[-1]
 
-        avg = net.branch_avgpool(x) 
+        avg = net.branch_avgpool(x)
         brpool = get_feats(net.branch_pool, avg)[1:] ; bp = brpool[-1]
         out = torch.cat([b1, b7_1, b7_2, bp], 1)
-        feats = (br1x1 + br7x7_1 + br7x7_2 + br7x7_3 + br7x7dbl_1 + 
-                  br7x7dbl_2 + br7x7dbl_3 + br7x7dbl_4 + br7x7dbl_5 + 
+        feats = (br1x1 + br7x7_1 + br7x7_2 + br7x7_3 + br7x7dbl_1 +
+                  br7x7dbl_2 + br7x7dbl_3 + br7x7dbl_4 + br7x7dbl_5 +
                   [avg] + brpool + [out])
     elif isinstance(net, skeletons.inception.InceptionD):
         assert len(children) == 7, child_warning
@@ -511,9 +509,9 @@ def get_custom_feats(net, x):
         br7x7x3_3 = get_feats(net.branch7x7x3_3, z)[1:] ; z = br7x7x3_3[-1]
         br7x7x3_4 = get_feats(net.branch7x7x3_4, z)[1:] ; b7 = br7x7x3_4[-1]
 
-        brpool = net.branch_maxpool(x) 
+        brpool = net.branch_maxpool(x)
         out = torch.cat([b3, b7,  brpool], 1)
-        feats = (br3x3_1 + br3x3_2 + br7x7x3_1 + br7x7x3_2 + br7x7x3_3 
+        feats = (br3x3_1 + br3x3_2 + br7x7x3_1 + br7x7x3_2 + br7x7x3_3
                       + br7x7x3_4 + [brpool] + [out])
     elif isinstance(net, skeletons.inception.InceptionE):
         assert len(children) == 10, child_warning
@@ -527,7 +525,7 @@ def get_custom_feats(net, x):
         br3x3dbl_3a = get_feats(net.branch3x3dbl_3a, z)[1:] ; z1 = br3x3dbl_3a[-1]
         br3x3dbl_3b = get_feats(net.branch3x3dbl_3b, z)[1:] ; z2 = br3x3dbl_3b[-1]
         br3x3dbl = torch.cat([z1, z2], 1)
-        avg = net.branch_avgpool(x) ; 
+        avg = net.branch_avgpool(x) ;
         brpool = get_feats(net.branch_pool, avg)[1:] ; bp = brpool[-1]
 
         out = torch.cat([b1, br3x3, br3x3dbl, bp], 1)
@@ -583,25 +581,25 @@ def get_feats(net, x, feats=[]):
    head, tail = children[:-1], children[-1]
 
    # handle chunking for models imported from torch (lua)
-   # use a string check hack to avoid adding a module import 
+   # use a string check hack to avoid adding a module import
    # path dependency
    if is_lambda_reduce(tail):
        assert is_lambda_map(head[-1]), 'invalid map reduce pair'
        tail = MapReducePair(head[-1], tail)
        head = head[:-1] # adjust head
-   elif isinstance(tail, (torchvision.models.densenet._DenseBlock, 
+   elif isinstance(tail, (torchvision.models.densenet._DenseBlock,
                           torchvision.models.densenet._Transition)):
        pass # handel in the custom block
    else: # standard model structure
-       while isinstance(tail, torch.nn.Sequential): 
+       while isinstance(tail, torch.nn.Sequential):
            children = list(tail.children())
            head_, tail = children[:-1], children[-1]
-           head = head + head_ 
+           head = head + head_
 
    trunk = torch.nn.Sequential(*head)
    trunk_feats = get_feats(trunk, x, feats)
-   if type(tail) in [torchvision.models.squeezenet.Fire, 
-                     torchvision.models.resnet.BasicBlock, 
+   if type(tail) in [torchvision.models.squeezenet.Fire,
+                     torchvision.models.resnet.BasicBlock,
                      torchvision.models.resnet.Bottleneck,
                      torchvision.models.densenet._DenseBlock,
                      torchvision.models.densenet._Transition,
@@ -839,7 +837,7 @@ class PTConv(PTLayer):
 # --------------------------------------------------------------------
 
 class PTBatchNorm(PTLayer):
-    def __init__(self, name, inputs, outputs, use_global_stats, 
+    def __init__(self, name, inputs, outputs, use_global_stats,
                                              momentum, eps):
         super().__init__(name, inputs, outputs)
 
@@ -865,7 +863,7 @@ class PTBatchNorm(PTLayer):
         var = pt_tensor_to_array(all_params['{}_running_var'.format(self.name)])
 
         # note: PyTorch uses a slightly different formula for batch norm than
-        # matconvnet at *test* time: 
+        # matconvnet at *test* time:
         # pytorch:
         #    y = ( x - mean(x)) / (sqrt(var(x)) + eps) * gamma + beta
         # mcn:
@@ -886,7 +884,7 @@ class PTBatchNorm(PTLayer):
 
 
 class PTPooling(PTLayer):
-    def __init__(self, name, inputs, outputs, method, pad, kernel_size, 
+    def __init__(self, name, inputs, outputs, method, pad, kernel_size,
                  stride, ceil_mode, sizes, dilation=[1,1]):
 
         super().__init__(name, inputs, outputs)
@@ -901,10 +899,10 @@ class PTPooling(PTLayer):
         elif len(pad) == 2 : pad = [pad[0], pad[0], pad[1], pad[1]]
 
         if ceil_mode:
-            # if ceil mode is engaged, we need to handle padding more 
-            # carefully pad to compensate for discrepancy 
+            # if ceil mode is engaged, we need to handle padding more
+            # carefully pad to compensate for discrepancy
             in_sz, out_sz = sizes
-            h_out = ((in_sz[2] + 2*pad[0] - dilation[0]*(kernel_size[0] - 1) -1) 
+            h_out = ((in_sz[2] + 2*pad[0] - dilation[0]*(kernel_size[0] - 1) -1)
                                                             / stride[0] + 1)
             w_out = ((in_sz[3] + 2*pad[1] - dilation[1]*(kernel_size[1] - 1) -1)
                                                              / stride[1] + 1)
