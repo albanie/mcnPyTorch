@@ -1,12 +1,12 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*- 
-# 
+# -*- coding: utf-8 -*-
+#
 # pytorch model importer
 
 # --------------------------------------------------------
 # mcnPyTorch
 # Licensed under The MIT License [see LICENSE.md for details]
-# Copyright (C) 2017 Samuel Albanie 
+# Copyright (C) 2017 Samuel Albanie
 # --------------------------------------------------------
 
 import sys
@@ -41,7 +41,7 @@ im = scipy.misc.imresize(scipy.misc.face(), args_.image_size)
 transform = pl.ImTransform(args_.image_size, (104, 117, 123), (2, 0, 1))
 x = Variable(transform(im).unsqueeze(0))
 feats = pl.compute_intermediate_feats(net.eval(), x, flatten_loc)
-sizes = [pl.tolist(feat.size()) for feat in feats] 
+sizes = [pl.tolist(feat.size()) for feat in feats]
 
 for sz in sizes:
     print(sz)
@@ -78,13 +78,13 @@ def process_custom_module(name, module, state):
         state['in_vars'] = block[-1].outputs
 
         if downsample:
-            prev = state['in_vars'] ; state['in_vars'] = id_var 
+            prev = state['in_vars'] ; state['in_vars'] = id_var
             down_block,_ = construct_layers([children[-1]], state)
             layers.extend(down_block)
             state['in_vars'] = prev
             id_var = down_block[-1].outputs
 
-        merge_name = '{}_merge'.format(name) ; 
+        merge_name = '{}_merge'.format(name)
         ins = id_var + state['in_vars']
         merge_layer = pl.PTSum(merge_name, ins, [merge_name])
         state = update_size_info(name, 'mcn-sum', state)
@@ -94,7 +94,7 @@ def process_custom_module(name, module, state):
         # add additional ReLU to match model
         name = '{}_id_relu'.format(name)
         state['out_vars'] = [name]
-        layers.append(pl.PTReLU(name, state['in_vars'], state['out_vars'])) 
+        layers.append(pl.PTReLU(name, state['in_vars'], state['out_vars']))
         state = update_size_info(name, 'ReLU', state)
         state['in_vars'] = state['out_vars']
 
@@ -108,13 +108,13 @@ def process_custom_module(name, module, state):
         state['in_vars'] = block[-1].outputs
 
         if downsample:
-            prev = state['in_vars'] ; state['in_vars'] = id_var 
+            prev = state['in_vars'] ; state['in_vars'] = id_var
             down_block,_ = construct_layers([children[-1]], state)
             layers.extend(down_block)
             state['in_vars'] = prev
             id_var = down_block[-1].outputs
 
-        merge_name = '{}_merge'.format(name) 
+        merge_name = '{}_merge'.format(name)
         ins = id_var + state['in_vars']
         merge_layer = pl.PTSum(merge_name, ins, [merge_name])
         state = update_size_info(name, 'mcn-sum', state)
@@ -124,7 +124,7 @@ def process_custom_module(name, module, state):
         # add additional ReLU to match model
         name = '{}_id_relu'.format(name)
         state['out_vars'] = [name]
-        layers.append(pl.PTReLU(name, state['in_vars'], state['out_vars'])) 
+        layers.append(pl.PTReLU(name, state['in_vars'], state['out_vars']))
         state = update_size_info(name, 'ReLU', state)
         state['in_vars'] = state['out_vars']
 
@@ -150,7 +150,7 @@ def process_custom_module(name, module, state):
     elif isinstance(module, skeletons.inception.InceptionA):
         assert len(children) == 8 , 'unexpected InceptionA size'
         in_var = state['in_vars']
-        state['prefix'] = name 
+        state['prefix'] = name
         b1x1,_ = construct_layers(children[:1], state)
         state['in_vars'] = in_var
         b5x5,_ = construct_layers(children[1:3], state)
@@ -165,7 +165,7 @@ def process_custom_module(name, module, state):
     elif isinstance(module, skeletons.inception.InceptionB):
         assert len(children) == 5 , 'unexpected InceptionB size'
         in_var = state['in_vars']
-        state['prefix'] = name 
+        state['prefix'] = name
         b3x3,_ = construct_layers(children[:1], state)
         state['in_vars'] = in_var
         b3x3dbl,_ = construct_layers(children[1:4], state)
@@ -178,7 +178,7 @@ def process_custom_module(name, module, state):
     elif isinstance(module, skeletons.inception.InceptionC):
         assert len(children) == 11 , 'unexpected InceptionC size'
         in_var = state['in_vars']
-        state['prefix'] = name 
+        state['prefix'] = name
         b1x1,_ = construct_layers(children[:1], state)
         state['in_vars'] = in_var
         b7x7,_ = construct_layers(children[1:4], state)
@@ -193,7 +193,7 @@ def process_custom_module(name, module, state):
     elif isinstance(module, skeletons.inception.InceptionD):
         assert len(children) == 7 , 'unexpected InceptionD size'
         in_var = state['in_vars']
-        state['prefix'] = name 
+        state['prefix'] = name
         b3x3,_ = construct_layers(children[:2], state)
         state['in_vars'] = in_var
         b7x7,_ = construct_layers(children[2:6], state)
@@ -206,7 +206,7 @@ def process_custom_module(name, module, state):
     elif isinstance(module, skeletons.inception.InceptionE):
         assert len(children) == 10 , 'unexpected InceptionE size'
         in_var = state['in_vars']
-        state['prefix'] = name 
+        state['prefix'] = name
         b1x1,_ = construct_layers(children[:1], state)
         state['in_vars'] = in_var
         b3x3,_ = construct_layers(children[1:2], state)
@@ -266,7 +266,7 @@ def process_custom_module(name, module, state):
 
         projection = list(children[0][1].named_children())[1]
         if not hasattr(projection[1], 'lambda_func'): # projection exists
-            prev = state['in_vars'] ; state['in_vars'] = id_var 
+            prev = state['in_vars'] ; state['in_vars'] = id_var
             down_block,_ = construct_layers([projection], state)
             layers.extend(down_block)
             state['in_vars'] = prev
@@ -287,7 +287,7 @@ def process_custom_module(name, module, state):
 
         name = '{}_id_relu'.format(name)
         state['out_vars'] = [name]
-        layers.append(pl.PTReLU(name, state['in_vars'], state['out_vars'])) 
+        layers.append(pl.PTReLU(name, state['in_vars'], state['out_vars']))
         state = update_size_info(name, 'ReLU', state)
         state['in_vars'] = state['out_vars']
     else:
@@ -312,9 +312,9 @@ def update_size_info(name, module, state, pop_first=1):
 
 def flatten_layers(name, layers, state) :
     """
-    Flattening is done in the network class, rather 
-    than in the moudles with pytorch, so we need to 'catch' this event 
-    and reproduce it in the mcn sense.  The reshape is essentially free, 
+    Flattening is done in the network class, rather
+    than in the moudles with pytorch, so we need to 'catch' this event
+    and reproduce it in the mcn sense.  The reshape is essentially free,
     but the permute can add some overhead
     """
     if state['prefix']: name = '{}_{}'.format(state['prefix'], name)
@@ -337,15 +337,15 @@ def construct_layers(graph, state):
     `state`: a dictionary which is carried through the graph construction
     `opts`: a dict of opts for the current layer
     """
-    layers = [] 
+    layers = []
     for name, module in graph:
 
         name = name.replace('.', '_') # make comatible with MATLAB
 
-        if name == 'classifier' and flatten_loc == 'classifier': 
+        if name == 'classifier' and flatten_loc == 'classifier':
             layers, state = flatten_layers(name, layers, state)
 
-        opts = {} 
+        opts = {}
         if state['prefix']: name = '{}_{}'.format(state['prefix'], name)
         state['out_vars'] = [name]
         pargs = [name, state['in_vars'], state['out_vars']]
@@ -413,10 +413,10 @@ def construct_layers(graph, state):
             opts['dilation'] = [1,1]
             opts['group'] = 1
             layers.append(pl.PTConv(*pargs, **opts))
-            
+
         # add support for custom/skeleton modules here
-        elif type(module) in [torchvision.models.resnet.Bottleneck, 
-                              torchvision.models.resnet.BasicBlock, 
+        elif type(module) in [torchvision.models.resnet.Bottleneck,
+                              torchvision.models.resnet.BasicBlock,
                               torchvision.models.squeezenet.Fire,
                               torchvision.models.densenet._Transition,
                               torchvision.models.densenet._DenseBlock,
@@ -438,7 +438,7 @@ def construct_layers(graph, state):
             children = list(module.named_children())
             prefix_ = state['prefix'] ; state['prefix'] = name
             layers_,state = construct_layers(children, state)
-            state['out_vars'] = layers_[-1].outputs 
+            state['out_vars'] = layers_[-1].outputs
             state['prefix'] = prefix_ # restore prefix
             layers.extend(layers_)
 
@@ -480,7 +480,7 @@ for layer in layers:
 
 # standard normalization for vision models in pytorch
 average_image = np.array((0.485, 0.456, 0.406),dtype='float')
-image_std = np.array((0.229, 0.224, 0.225), dtype='float') 
+image_std = np.array((0.229, 0.224, 0.225), dtype='float')
 
 minputs = np.empty(shape=[0,], dtype=pl.minputdt)
 dataShape = args_.image_size
@@ -490,7 +490,7 @@ print('Full input image size:', args_.full_image_size)
 mnormalization = {
   'imageSize': pl.row(dataShape),
   'averageImage': average_image,
-  'imageStd': image_std, 
+  'imageStd': image_std,
   'interpolation': 'bilinear',
   'keepAspect': True,
   'border': pl.row([0,0]),
@@ -519,7 +519,7 @@ mnet = {'layers': np.empty(shape=[0,], dtype=pl.mlayerdt),
 
 for layer in ptmodel.layers.values():
     mnet['layers'] = np.append(mnet['layers'], layer.toMatlab(), axis=0)
- 
+
 for param in ptmodel.params.values():
     mnet['params'] = np.append(mnet['params'], param.toMatlab(), axis=0)
 
