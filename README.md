@@ -10,11 +10,11 @@ Some of the useful pretrained models available in the `torchvision.models` modul
 have been converted into MatConvNet and are available for download at the link
 below: 
 
-[Torchvision models](http://www.robots.ox.ac.uk/~albanie/models.html#pytorch-models)
+[Torchvision models](http://www.robots.ox.ac.uk/~albanie/mcn-models.html#pytorch-models)
 
 The *ResNeXt* family of models have also been imported and are available for download:
 
-[ResNeXt models](http://www.robots.ox.ac.uk/~albanie/models.html#resnext-models)
+[ResNeXt models](http://www.robots.ox.ac.uk/~albanie/mcn-models.html#resnext-models)
 
 ### Converting your own models
 
