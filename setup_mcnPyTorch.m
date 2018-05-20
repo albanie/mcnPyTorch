@@ -1,4 +1,4 @@
-function setup_mcnPyTorch()
+function setup_mcnPyTorch(varargin)
 %SETUP_MCNPYTORCH Sets up mcnPyTorch, by adding its folders
 % to the Matlab path
 %
