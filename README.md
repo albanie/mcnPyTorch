@@ -1,6 +1,8 @@
 PyTorch model converter
 ---
 
+**NOTICE: This repo is no longer actively maintained.**
+
 A tool for converting [PyTorch](https://github.com/pytorch/pytorch) models into 
 [MatConvNet](https://github.com/vlfeat/matconvnet). 
 
